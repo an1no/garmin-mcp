@@ -91,6 +91,8 @@ Tell the user:
    2. Paste the URL; leave "Additional settings" empty (Gemini registers itself via DCR).
    3. On the server's approval page: check the redirect goes to a Google host, enter the admin password, Approve.
    4. In chats, type **`@`** and pick the app before asking. Without the @-mention Gemini doesn't use the tools.
+   Claude works too: Settings → Connectors → Add custom connector → paste the URL → Connect → approve (check the
+   redirect goes to claude.ai or claude.com).
 4. When the Garmin key expires (Garmin emails a week before): `npm run setup -- --update-key`.
 
 ### 6. Optional deeper check

@@ -1,8 +1,9 @@
-# Garmin Connect in Gemini: your own MCP server on Cloudflare
+# Garmin Connect in Gemini and Claude: your own MCP server on Cloudflare
 
 [![CI](https://github.com/an1no/garmin-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/an1no/garmin-mcp/actions/workflows/ci.yml)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/an1no/garmin-mcp)
 
-A small, private server that lets the **Gemini web app** (`gemini.google.com`), or any other MCP client, read **your
+A small, private server that lets the **Gemini web app** (`gemini.google.com`), **Claude** or any other MCP client read **your
 own Garmin Connect data**: activities, sleep, HRV, Body Battery, VO2 max, weight, Fitness Age, heart rate zones, logged food and daily health stats. It runs on Cloudflare's free
 plan, nothing sits in between, and only you can connect apps to it.
 
@@ -15,7 +16,8 @@ the data from Garmin's official Personal API.
   time, instead of logging in with your Garmin password or imitating the Garmin Connect website.
 - **Remote, so it works everywhere.** It runs on Cloudflare, so it works in the browser and on your phone, with
   nothing running on your computer.
-- **One command, free.** `npm run setup` deploys it on Cloudflare's free plan and checks that it works.
+- **One command or one click, free.** `npm run setup` (or the Deploy to Cloudflare button) deploys it on
+  Cloudflare's free plan.
 - **Locked to you.** Apps can connect only after you approve them with your own password.
 
 > **Using an AI coding agent** (Claude Code, Codex, Cursor...)? Clone this repo, open it in the agent and say
@@ -33,7 +35,7 @@ the data from Garmin's official Personal API.
 | 2 | **Git** | Check with `git --version`. Install from [git-scm.com](https://git-scm.com) if needed. |
 | 3 | **A Cloudflare account** (free) | Sign up at [dash.cloudflare.com/sign-up](https://dash.cloudflare.com/sign-up). Setup logs you in through the browser. |
 | 4 | **A Garmin Personal API key** | See [Getting a Garmin Personal API key](#getting-a-garmin-personal-api-key) below. |
-| 5 | **Gemini with custom apps** | A Google account where Gemini offers "Connect to an MCP server" in its settings. |
+| 5 | **Gemini or Claude** | Gemini with "Connect to an MCP server" in its settings, or Claude with custom connectors (see [Other MCP clients](#other-mcp-clients)). |
 
 ### Install and deploy
 
@@ -75,6 +77,24 @@ part of all your Worker URLs. Then run `npm run setup` again.
 
 Running `npm run setup` again later is safe: it redeploys and keeps your existing password and Garmin key.
 
+### Or: deploy with one click (no terminal)
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/an1no/garmin-mcp)
+
+The button copies this repository into your GitHub (or GitLab) account and deploys it from there:
+
+1. Log in to Cloudflare and connect your GitHub account when asked. Ticking **Create private Git repository** is a
+   good idea.
+2. **Project name:** keep `garmin-mcp` or choose another; it becomes part of your URL. **KV namespace:**
+   **Create new**.
+3. Fill in the two secrets: **GARMIN_PERSONAL_API_KEY** (see [below](#getting-a-garmin-personal-api-key)) and
+   **MCP_ADMIN_PASSWORD**: a long random password (at least 12 characters) that you keep in a password manager.
+   Leave **TIMEZONE** as `auto`.
+4. **Deploy.** When the build finishes, your MCP server URL is `https://<project-name>.<your-subdomain>.workers.dev/mcp`.
+
+Every push to your copy redeploys it automatically. Your copy doesn't follow this repository by itself: to get
+updates, pull them from `an1no/garmin-mcp` into your copy (or use `npm run setup` from a clone of this one).
+
 ### Connect it to Gemini
 
 1. Open [gemini.google.com](https://gemini.google.com), go to **Settings**, find the connected apps section and
@@ -96,9 +116,18 @@ Gemini keeps you connected as long as you use the app at least once every 30 day
 ### Other MCP clients
 
 The server speaks standard MCP over Streamable HTTP with OAuth (Dynamic Client Registration and Client ID Metadata
-Documents), so other clients that support remote MCP servers with OAuth should work the same way: add the server
-URL, approve on the password page, ask. Only the Gemini web app has been tested end to end; if you try another
-client (for example Claude's custom connectors), please open an issue with how it went.
+Documents), so clients that support remote MCP servers with OAuth work the same way: add the server URL, approve on
+the password page, ask. Tested end to end: the **Gemini** web app and **Claude**.
+
+**Claude** (claude.ai, desktop and mobile apps):
+
+1. **Settings** → **Connectors** → **Add custom connector**.
+2. Name it (e.g. `Garmin Connect`), paste your **MCP server URL**, leave the advanced settings empty, **Add**.
+3. **Connect**. On the approval page, check that access will be sent to `claude.ai` (or `claude.com`), enter your
+   admin password and **Approve**.
+4. In a chat, make sure the connector is enabled (tools menu next to the message box), then ask.
+
+If you try another client, please open an issue with how it went.
 
 On the approval page, always check that access will be sent to the app you're connecting (the page shows the
 destination host) before you enter your password.
