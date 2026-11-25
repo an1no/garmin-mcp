@@ -1,0 +1,63 @@
+/**
+ * Cloudflare Worker configuration for the Garmin MCP server.
+ * Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "garmin-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-11-20",
+	"compatibility_flags": [
+		// Needed by the MCP SDK / agents packages.
+		"nodejs_compat",
+		// Required by @cloudflare/workers-oauth-provider when Client ID Metadata
+		// Documents (CIMD) are enabled: outbound fetches may only reach public hosts.
+		"global_fetch_strictly_public"
+	],
+
+	// Serve on https://garmin-mcp.<your-subdomain>.workers.dev
+	"workers_dev": true,
+	// Don't expose extra per-version preview hostnames.
+	"preview_urls": false,
+
+	// McpAgent runs every MCP session inside a Durable Object.
+	// agents' McpAgent.serve() looks for the binding named MCP_OBJECT by default.
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MCP_OBJECT",
+				"class_name": "GarminMCP"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["GarminMCP"]
+		}
+	],
+
+	// OAuth state (clients, grants, hashed tokens) + the cached, encrypted Garmin access token.
+	// Replace the id with the one printed by: npx wrangler kv namespace create OAUTH_KV
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "29c797aa997a4f6b8077433208919d54"
+		}
+	],
+
+	"vars": {
+		// IANA timezone used when a tool call omits a date ("today").
+		// Set it to your own, e.g. "Europe/Berlin" or "America/New_York".
+		"TIMEZONE": "UTC"
+	},
+
+	// Set with: npx wrangler secret put <NAME>
+	"secrets": {
+		"required": ["GARMIN_PERSONAL_API_KEY", "MCP_ADMIN_PASSWORD"]
+	},
+
+	"observability": {
+		"enabled": true
+	}
+}
