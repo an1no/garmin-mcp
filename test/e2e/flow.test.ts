@@ -246,7 +246,7 @@ describe("connecting a client", () => {
 		expect(mcp.sessionId()).toBeTruthy();
 
 		const list = await mcp.send("tools/list");
-		expect(list.result.tools).toHaveLength(10);
+		expect(list.result.tools).toHaveLength(12);
 
 		const call = await mcp.send("tools/call", { name: "get_sleep_data", arguments: { date: "2026-11-25" } });
 		expect(call.result.isError ?? false).toBe(false);

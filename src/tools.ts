@@ -5,7 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { fetchVo2Max, fetchWeight } from "./fitness";
+import { fetchFitnessProfile, fetchVo2Max, fetchWeight } from "./fitness";
 import {
 	ACTIVITY_UNITS,
 	addDays,
@@ -22,13 +22,14 @@ import {
 } from "./format";
 import { GarminApiError, type GarminClient } from "./garmin";
 import { DAY_DETAIL_PARTS, fetchDayDetails } from "./intraday";
+import { fetchNutrition, NUTRITION_MAX_DAYS } from "./nutrition";
 import { collectTrends, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
 
-export const SERVER_INFO = { name: "garmin-connect", version: "1.3.0" } as const;
+export const SERVER_INFO = { name: "garmin-connect", version: "1.4.0" } as const;
 
 export const SERVER_INSTRUCTIONS =
 	"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery, " +
-	"VO2 max, weight and body composition). Dates are YYYY-MM-DD calendar dates in the user's local time; when a " +
+	"VO2 max, weight and body composition, Fitness Age, heart rate zones, logged food). Dates are YYYY-MM-DD calendar dates in the user's local time; when a " +
 	"date is omitted, 'today' follows the timezone in the user's Garmin profile. Distances are meters, durations seconds, speeds m/s " +
 	"unless a field name says otherwise. Use get_activities to find activityIds, then get_activity_details for one workout. " +
 	"For questions about longer periods (trends, averages, totals, comparing weeks or months) use get_trends, which " +
@@ -354,6 +355,62 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 					intervalMinutes,
 					parts: [...new Set(include ?? DAY_DETAIL_PARTS)],
 				});
+			}),
+	);
+
+	// ------------------------------------------------------------------ fitness profile
+	server.registerTool(
+		"get_fitness_profile",
+		{
+			title: "Get Garmin Fitness Age and heart rate zones",
+			description:
+				"Fitness Age (the latest as of the date) with the components behind it, e.g. vigorous days or minutes, resting " +
+				"heart rate, BMI or body fat, each with its target and the Fitness Age reachable by meeting it; plus the heart " +
+				"rate zones Garmin uses per sport (bpm ranges for zones 1-5, max, resting and lactate-threshold heart rate, " +
+				"training method). Use for 'how fit am I?', 'what are my heart rate zones?' or 'what should I improve?'.",
+			inputSchema: {
+				date: date("Fitness Age as of this date, YYYY-MM-DD. Defaults to today.").optional(),
+			},
+			annotations: { title: "Get Garmin Fitness Age and heart rate zones", ...READ_ONLY },
+		},
+		async ({ date: day }) =>
+			run(async () => {
+				const calendarDate = day ?? (await today(ctx));
+				assertDate(calendarDate, "date");
+				return fetchFitnessProfile(ctx.garmin(), calendarDate);
+			}),
+	);
+
+	// ------------------------------------------------------------------ nutrition
+	server.registerTool(
+		"get_nutrition",
+		{
+			title: "Get Garmin nutrition log",
+			description:
+				"Food logged in Garmin Connect: calories, carbs, protein and fat against the day's goals. For one day (default " +
+				"today) also each meal with its foods and servings; for a range (up to " +
+				`${NUTRITION_MAX_DAYS} days) daily totals and averages over the logged days. Only has data if the user logs ` +
+				"food in Garmin Connect.",
+			inputSchema: {
+				date: date("Single calendar date, YYYY-MM-DD. Defaults to today.").optional(),
+				startDate: date("Range start (inclusive), YYYY-MM-DD. Use with endDate instead of date.").optional(),
+				endDate: date("Range end (inclusive), YYYY-MM-DD.").optional(),
+			},
+			annotations: { title: "Get Garmin nutrition log", ...READ_ONLY },
+		},
+		async ({ date: day, startDate, endDate }) =>
+			run(async () => {
+				if (startDate || endDate) {
+					const range = resolveRange(startDate, endDate, {
+						today: await today(ctx),
+						defaultDays: 1,
+						maxDays: NUTRITION_MAX_DAYS,
+					});
+					return fetchNutrition(ctx.garmin(), range);
+				}
+				const calendarDate = day ?? (await today(ctx));
+				assertDate(calendarDate, "date");
+				return fetchNutrition(ctx.garmin(), { startDate: calendarDate, endDate: calendarDate });
 			}),
 	);
 

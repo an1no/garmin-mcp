@@ -6,6 +6,7 @@
  */
 import type { GarminClient } from "./garmin";
 import { compact, num, round } from "./format";
+import { fetchParts } from "./parts";
 import { chunkRange, mapLimit } from "./trends";
 
 type Json = Record<string, unknown>;
@@ -221,4 +222,85 @@ export async function fetchWeight(garmin: GarminClient, range: Range): Promise<J
 			.catch(() => undefined),
 	]);
 	return summarizeWeight(weightDays(pages), range, goal);
+}
+
+// ---------------------------------------------------------------------------
+// Fitness Age and heart rate zones
+// ---------------------------------------------------------------------------
+
+export const FITNESS_PROFILE_PARTS = ["fitnessAge", "heartRateZones"] as const;
+export type FitnessProfilePart = (typeof FITNESS_PROFILE_PARTS)[number];
+
+/** /fitnessage-service/fitnessage/v2/{date} (documented as an array) -> concise Fitness Age. */
+export function shapeFitnessAge(raw: unknown): Json | undefined {
+	const items = Array.isArray(raw) ? raw : raw ? [raw] : [];
+	const f = obj(items[items.length - 1]);
+	const components: Json = {};
+	for (const [name, value] of Object.entries(obj(f.components))) {
+		const c = obj(value);
+		components[name] = compact({
+			value: round(c.value, 1),
+			target: round(c.targetValue, 1),
+			improvementNeeded: round(c.improvementValue, 1),
+			fitnessAgeIfReached: round(c.potentialAge, 1),
+			priority: c.priority,
+			stale: c.stale === true ? true : undefined,
+			lastMeasured: c.lastMeasurementDate,
+		});
+	}
+	const shaped = compact({
+		fitnessAge: round(f.fitnessAge, 1),
+		chronologicalAge: f.chronologicalAge,
+		achievableFitnessAge: round(f.achievableFitnessAge, 1),
+		previousFitnessAge: round(f.previousFitnessAge, 1),
+		lastUpdated: f.lastUpdated,
+		notAvailableBecause: f.invalidReason,
+		components,
+	});
+	return Object.keys(shaped).length ? shaped : undefined;
+}
+
+/** /biometric-service/heartRateZones/v2 -> per sport, zones 1-5 as bpm ranges. */
+export function shapeHeartRateZones(raw: unknown): Json[] | undefined {
+	const rows = arr(raw)
+		.map(obj)
+		.filter((z) => num(z.zone1Floor) !== undefined);
+	if (!rows.length) return undefined;
+	return rows.map((z) => {
+		const floors = [z.zone1Floor, z.zone2Floor, z.zone3Floor, z.zone4Floor, z.zone5Floor].map(num);
+		const max = num(z.maxHeartRateUsed);
+		const zones = floors.flatMap((from, i) => {
+			if (from === undefined) return [];
+			const next = floors[i + 1];
+			return [{ zone: i + 1, fromBpm: from, toBpm: i < 4 ? (next !== undefined ? next - 1 : undefined) : max }];
+		});
+		return compact({
+			sport: z.sport,
+			trainingMethod: z.trainingMethod,
+			maxHeartRate: max,
+			restingHeartRate: z.restingHeartRateUsed,
+			lactateThresholdHeartRate: z.lactateThresholdHeartRateUsed,
+			zones,
+		});
+	});
+}
+
+/** Fitness Age as of `date` (the latest available, searching the full history) and the heart rate zones. */
+export async function fetchFitnessProfile(garmin: GarminClient, date: string): Promise<Json> {
+	await garmin.getAccessToken(); // one token request up front instead of one per parallel call
+	const { results, errors, missing } = await fetchParts<FitnessProfilePart, Json | Json[]>(
+		{
+			fitnessAge: async () =>
+				shapeFitnessAge(await garmin.get(`/fitnessage-service/fitnessage/v2/${date}`, { fullHistoryScan: true })),
+			heartRateZones: async () => shapeHeartRateZones(await garmin.get("/biometric-service/heartRateZones/v2")),
+		},
+		FITNESS_PROFILE_PARTS,
+	);
+	return compact({
+		date,
+		units: { fitnessAge: "years", heartRate: "bpm" },
+		noData: missing.length ? missing : undefined,
+		errors,
+		...results,
+	});
 }

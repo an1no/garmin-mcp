@@ -74,7 +74,7 @@ export function consentPage(details: ConsentDescription, handle: string, error?:
 	return layout(
 		`Authorize ${details.clientName}`,
 		`<h1>Connect your Garmin data</h1>
-<p><strong>${name}</strong> wants read-only access to your Garmin Connect data (activities, sleep, HRV, Body Battery and daily health stats).</p>
+<p><strong>${name}</strong> wants read-only access to your Garmin Connect data (activities, sleep, HRV, Body Battery, daily health stats, VO2 max, weight, Fitness Age, heart rate zones and logged food).</p>
 ${unverified}
 <dl class="facts">
   <div><dt>App</dt><dd>${name}</dd></div>

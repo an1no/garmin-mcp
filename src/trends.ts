@@ -6,7 +6,8 @@
  * The aggregators work on the shapes produced by the summarizers in format.ts, so they share
  * one definition of every field with the day-by-day tools.
  */
-import { GarminApiError, type GarminClient } from "./garmin";
+import type { GarminClient } from "./garmin";
+import { describeError } from "./parts";
 import {
 	addDays,
 	compact,
@@ -397,14 +398,6 @@ async function fetchActivities(
 			`${ACTIVITY_PAGE_SIZE * ACTIVITY_MAX_PAGES} most recent. Use a shorter range for complete totals.`,
 	);
 	return out;
-}
-
-function describeError(error: unknown): string {
-	if (error instanceof GarminApiError) return error.message;
-	if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
-		return "Garmin did not respond in time.";
-	}
-	return error instanceof Error ? error.message : String(error);
 }
 
 /**

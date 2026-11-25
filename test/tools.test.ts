@@ -22,6 +22,8 @@ const ALL_TOOLS = [
 	"get_vo2max",
 	"get_weight",
 	"get_trends",
+	"get_fitness_profile",
+	"get_nutrition",
 ];
 
 type Handler = (path: string, query: Record<string, unknown>) => unknown;
@@ -54,7 +56,7 @@ function freezeDate(iso: string) {
 afterEach(() => vi.useRealTimers());
 
 describe("server", () => {
-	it("lists exactly the ten tools, all read-only, with input schemas and descriptions", async () => {
+	it("lists exactly the twelve tools, all read-only, with input schemas and descriptions", async () => {
 		const { client } = await connect();
 		const { tools } = await client.listTools();
 		expect(tools.map((t) => t.name).sort()).toEqual([...ALL_TOOLS].sort());
@@ -86,6 +88,8 @@ describe("argument validation", () => {
 		["get_day_details", { intervalMinutes: 2 }],
 		["get_trends", { metrics: ["steps"] }],
 		["get_trends", { period: "year" }],
+		["get_fitness_profile", { date: "yesterday" }],
+		["get_nutrition", { startDate: "2026-11-01T00:00" }],
 	])("%s rejects %j without calling Garmin", async (name, args) => {
 		const { call, garmin } = await connect();
 		const result = await call(name, args);
@@ -231,6 +235,32 @@ describe("single-resource tools", () => {
 			"/wellness-service/wellness/daily/spo2acclimation/2026-11-26",
 			"/wellness-service/wellness/dailyHeartRate",
 		]);
+	});
+});
+
+describe("fitness profile and nutrition", () => {
+	it("get_fitness_profile: today in the user's zone, both parts", async () => {
+		freezeDate("2026-11-25T21:30:00Z");
+		const { call, garmin } = await connect((path) => (path.startsWith("/fitnessage") ? [{ fitnessAge: 30.04 }] : []), "Indian/Mauritius");
+		const r = (await call("get_fitness_profile")).json();
+		expect(r).toMatchObject({ date: "2026-11-26", fitnessAge: { fitnessAge: 30 }, noData: ["heartRateZones"] });
+		expect(garmin.calls.map((c) => c.path).sort()).toEqual(["/biometric-service/heartRateZones/v2", "/fitnessage-service/fitnessage/v2/2026-11-26"]);
+	});
+
+	it("get_nutrition: today by default, a range day by day, at most 14 days", async () => {
+		freezeDate("2026-11-25T08:00:00Z");
+		const { call, garmin } = await connect(() => null);
+		expect((await call("get_nutrition")).json()).toMatchObject({ date: "2026-11-25", logged: false });
+		expect(garmin.calls[0]).toEqual({ path: "/nutrition-service/food/logs/2026-11-25", query: { includeMedia: false } });
+
+		const week = (await call("get_nutrition", { startDate: "2026-11-19", endDate: "2026-11-25" })).json();
+		expect(week).toMatchObject({ startDate: "2026-11-19", endDate: "2026-11-25", daysLogged: 0 });
+		expect(garmin.calls).toHaveLength(1 + 7);
+
+		const tooLong = await call("get_nutrition", { startDate: "2026-11-01", endDate: "2026-11-25" });
+		expect(tooLong.isError).toBe(true);
+		expect(tooLong.text).toMatch(/at most 14 days/);
+		expect(garmin.calls).toHaveLength(8);
 	});
 });
 

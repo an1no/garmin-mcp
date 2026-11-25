@@ -5,8 +5,9 @@
  * Garmin's value arrays carry GMT epoch timestamps; they are shown as local clock times in the
  * user's timezone (the same one that decides "today").
  */
-import { GarminApiError, type GarminClient } from "./garmin";
+import type { GarminClient } from "./garmin";
 import { compact, num, round } from "./format";
+import { fetchParts } from "./parts";
 
 type Json = Record<string, unknown>;
 
@@ -196,14 +197,6 @@ export function shapeSpo2(raw: unknown, timeZone: string): Json | undefined {
 // Fetching
 // ---------------------------------------------------------------------------
 
-function describeError(error: unknown): string {
-	if (error instanceof GarminApiError) return error.message;
-	if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
-		return "Garmin did not respond in time.";
-	}
-	return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * Fetches the requested parts in parallel. A part that fails is reported in `errors` while the
  * others are still returned; if every part fails, the first error is thrown.
@@ -222,23 +215,7 @@ export async function fetchDayDetails(
 		spo2: async () => shapeSpo2(await garmin.get(`/wellness-service/wellness/daily/spo2acclimation/${date}`), timeZone),
 	};
 
-	const result: Json = {};
-	const errors: Partial<Record<DayDetailPart, string>> = {};
-	const failures: unknown[] = [];
-	const missing: DayDetailPart[] = [];
-	await Promise.all(
-		opts.parts.map(async (part) => {
-			try {
-				const shaped = await fetchers[part]();
-				if (shaped) result[part] = shaped;
-				else missing.push(part);
-			} catch (error) {
-				errors[part] = describeError(error);
-				failures.push(error);
-			}
-		}),
-	);
-	if (failures.length === opts.parts.length) throw failures[0];
+	const { results, errors, missing } = await fetchParts(fetchers, opts.parts);
 
 	return compact({
 		date,
@@ -250,6 +227,6 @@ export async function fetchDayDetails(
 			"(rows with a single reading show just its value).",
 		noData: missing.length ? DAY_DETAIL_PARTS.filter((p) => missing.includes(p)) : undefined,
 		errors,
-		...result,
+		...results,
 	});
 }

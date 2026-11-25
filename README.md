@@ -3,7 +3,7 @@
 [![CI](https://github.com/an1no/garmin-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/an1no/garmin-mcp/actions/workflows/ci.yml)
 
 A small, private server that lets the **Gemini web app** (`gemini.google.com`), or any other MCP client, read **your
-own Garmin Connect data**: activities, sleep, HRV, Body Battery, VO2 max, weight and daily health stats. It runs on Cloudflare's free
+own Garmin Connect data**: activities, sleep, HRV, Body Battery, VO2 max, weight, Fitness Age, heart rate zones, logged food and daily health stats. It runs on Cloudflare's free
 plan, nothing sits in between, and only you can connect apps to it.
 
 You ask Gemini things like *"@Garmin Connect how did I sleep this week?"*, and Gemini calls your server, which reads
@@ -129,6 +129,8 @@ Garmin emails you about a week before the key expires. See [Renewing the Garmin 
 | `get_day_details` | One day in local time: heart rate per interval (avg/min/max, default 15 min), resting, the day's lowest/highest reading with times, abnormal readings; overnight HRV readings with sleep start/end; SpO2 hourly averages, sleep average, latest | One day |
 | `get_vo2max` | VO2 max (ml/kg/min) for running/walking, cycling and rowing: first and latest value, change, min/max, the dates it changed | Up to 1 year (default 365 days) |
 | `get_weight` | Weight, BMI, body fat and water %, muscle and bone mass, visceral fat, metabolic age: first/latest/lowest/highest, change, average, weight goal, daily values or monthly averages | Up to 1 year (default 90 days) |
+| `get_fitness_profile` | Fitness Age with its components (e.g. vigorous days, resting heart rate, BMI), each with its target and the Fitness Age reachable by meeting it; heart rate zones 1-5 in bpm per sport, max/resting/lactate-threshold heart rate | As of one date |
+| `get_nutrition` | Food logged in Garmin Connect: calories, carbs, protein, fat against the goals; for one day each meal and its foods | One day, or up to 14 days |
 
 Example prompts:
 
@@ -142,6 +144,9 @@ Example prompts:
 - `@Garmin Connect how has my VO2 max changed this year?`
 - `@Garmin Connect what was my heart rate like yesterday afternoon, and how did my HRV look overnight?`
 - `@Garmin Connect how much weight have I lost since January, and how far am I from my goal?`
+- `@Garmin Connect what is my Fitness Age and what would improve it most?`
+- `@Garmin Connect what are my heart rate zones for running?`
+- `@Garmin Connect how many calories and how much protein did I log this week?`
 
 `get_trends` exists so that questions about long periods stay fast and accurate: instead of sending the model a year
 of days (hundreds of records), the server sends one row per week or month plus an overall summary.
@@ -331,7 +336,7 @@ granted scope and how Garmin errors reach the client.
   caching, retry on 401, error messages, token formats.
 - **Every tool's data handling:** date ranges and limits, chunking (sleep 31 days, others 28), weekly/monthly
   aggregation, unit conversion (grams to kg), local times and timezone handling, partial failures.
-- **The MCP layer:** each of the ten tools is called through a real MCP client and server (in-memory transport):
+- **The MCP layer:** each of the twelve tools is called through a real MCP client and server (in-memory transport):
   the tool list and annotations, argument validation, how arguments become Garmin requests, defaults that depend on
   "today", and how errors reach the model.
 
@@ -385,9 +390,11 @@ src/
   security.ts            Constant-time password check and KV-backed brute-force lockout
   html.ts                HTML templates and security headers for the auth pages
   mcp.ts                 GarminMCP (McpAgent Durable Object): Garmin client, timezone, registers the tools
-  tools.ts               The ten MCP tools: schemas, descriptions, argument handling, error messages
+  tools.ts               The twelve MCP tools: schemas, descriptions, argument handling, error messages
   trends.ts              get_trends: chunked fetching and weekly/monthly aggregation
-  fitness.ts             get_vo2max and get_weight: fetching and shaping
+  fitness.ts             get_vo2max, get_weight, get_fitness_profile: fetching and shaping
+  nutrition.ts           get_nutrition: one day in detail, or daily totals for up to 14 days
+  parts.ts               Runs several Garmin requests; one failing part is reported, not fatal
   intraday.ts            get_day_details: heart rate, overnight HRV and SpO2 per interval, in local time
   profile.ts             Timezone for "today": TIMEZONE, or the Garmin profile's (cached in KV)
   garmin.ts              Garmin Personal API client with encrypted token caching

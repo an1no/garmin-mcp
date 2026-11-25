@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { GarminApiError } from "../src/garmin";
 import {
+	fetchFitnessProfile,
 	fetchVo2Max,
 	fetchWeight,
 	kg,
+	shapeFitnessAge,
+	shapeHeartRateZones,
 	shapeWeight,
 	shapeWeightGoal,
 	summarizeVo2Max,
@@ -192,5 +195,92 @@ describe("weight", () => {
 		);
 		const r = (await fetchWeight(g.client, { startDate: "2025-03-01", endDate: "2025-03-10" })) as Record<string, any>;
 		expect(r.goal).toEqual({ weightKg: 68.5 });
+	});
+});
+
+describe("Fitness Age and heart rate zones", () => {
+	const fitnessAgePayload = [
+		{
+			chronologicalAge: 32,
+			fitnessAge: 28.46,
+			achievableFitnessAge: 25.04,
+			previousFitnessAge: 29.1,
+			lastUpdated: "2026-11-20T08:00:00.0",
+			components: {
+				vigorousDaysAvg: { value: 2.14, targetValue: 4, improvementValue: 1.86, potentialAge: 26.5, priority: 1, lastMeasurementDate: "2026-11-24" },
+				rhr: { value: 55, targetValue: 52, improvementValue: 3, potentialAge: 27.9, priority: 2, stale: false },
+				bmi: { value: 22.84, targetValue: 22.84, improvementValue: 0, priority: 3, stale: true, staleInputs: ["weight"] },
+			},
+		},
+	];
+	const zonesPayload = [
+		{ sport: "DEFAULT", trainingMethod: "HR_MAX", maxHeartRateUsed: 190, restingHeartRateUsed: 55, zone1Floor: 95, zone2Floor: 114, zone3Floor: 133, zone4Floor: 152, zone5Floor: 171 },
+		{ sport: "CYCLING", trainingMethod: "LACTATE_THRESHOLD", lactateThresholdHeartRateUsed: 165, maxHeartRateUsed: 185, zone1Floor: 100, zone2Floor: 120, zone3Floor: 140, zone4Floor: 155, zone5Floor: 166 },
+		{ sport: "SWIMMING" }, // no zones configured
+	];
+
+	it("shapeFitnessAge: rounded ages, components with targets, stale flag only when true", () => {
+		expect(shapeFitnessAge(fitnessAgePayload)).toEqual({
+			fitnessAge: 28.5,
+			chronologicalAge: 32,
+			achievableFitnessAge: 25,
+			previousFitnessAge: 29.1,
+			lastUpdated: "2026-11-20T08:00:00.0",
+			components: {
+				vigorousDaysAvg: { value: 2.1, target: 4, improvementNeeded: 1.9, fitnessAgeIfReached: 26.5, priority: 1, lastMeasured: "2026-11-24" },
+				rhr: { value: 55, target: 52, improvementNeeded: 3, fitnessAgeIfReached: 27.9, priority: 2 },
+				bmi: { value: 22.8, target: 22.8, improvementNeeded: 0, priority: 3, stale: true },
+			},
+		});
+		expect(shapeFitnessAge(fitnessAgePayload[0])).toEqual(shapeFitnessAge(fitnessAgePayload)); // a bare object works too
+		expect(shapeFitnessAge([{ invalidReason: "USER_EMPTY_AGE" }])).toEqual({ notAvailableBecause: "USER_EMPTY_AGE" });
+		expect(shapeFitnessAge([])).toBeUndefined();
+		expect(shapeFitnessAge(null)).toBeUndefined();
+	});
+
+	it("shapeHeartRateZones: bpm ranges per sport, zone 5 up to max, sports without zones skipped", () => {
+		const zones = shapeHeartRateZones(zonesPayload)!;
+		expect(zones).toHaveLength(2);
+		expect(zones[0]).toEqual({
+			sport: "DEFAULT",
+			trainingMethod: "HR_MAX",
+			maxHeartRate: 190,
+			restingHeartRate: 55,
+			zones: [
+				{ zone: 1, fromBpm: 95, toBpm: 113 },
+				{ zone: 2, fromBpm: 114, toBpm: 132 },
+				{ zone: 3, fromBpm: 133, toBpm: 151 },
+				{ zone: 4, fromBpm: 152, toBpm: 170 },
+				{ zone: 5, fromBpm: 171, toBpm: 190 },
+			],
+		});
+		expect(zones[1]).toMatchObject({ sport: "CYCLING", lactateThresholdHeartRate: 165 });
+		expect(shapeHeartRateZones([])).toBeUndefined();
+		expect(shapeHeartRateZones([{ sport: "RUNNING" }])).toBeUndefined();
+	});
+
+	it("fetchFitnessProfile: both parts in parallel, full-history Fitness Age, one token request", async () => {
+		const g = fakeGarmin((path) => (path.startsWith("/fitnessage-service") ? fitnessAgePayload : zonesPayload));
+		const r = (await fetchFitnessProfile(g.client, "2026-11-25")) as Record<string, any>;
+		expect(g.tokenCalls).toBe(1);
+		expect(g.calls).toEqual(
+			expect.arrayContaining([
+				{ path: "/fitnessage-service/fitnessage/v2/2026-11-25", query: { fullHistoryScan: true } },
+				{ path: "/biometric-service/heartRateZones/v2", query: {} },
+			]),
+		);
+		expect(r.fitnessAge.fitnessAge).toBe(28.5);
+		expect(r.heartRateZones).toHaveLength(2);
+		expect(r).not.toHaveProperty("errors");
+	});
+
+	it("fetchFitnessProfile: one failing part is reported; missing data is listed", async () => {
+		const g = fakeGarmin((path) => {
+			if (path.startsWith("/fitnessage-service")) throw new GarminApiError("Rate limited by Garmin - wait a bit and try again.", 429, path);
+			return [];
+		});
+		const r = (await fetchFitnessProfile(g.client, "2026-11-25")) as Record<string, any>;
+		expect(r.errors.fitnessAge).toMatch(/Rate limited/);
+		expect(r.noData).toEqual(["heartRateZones"]);
 	});
 });
