@@ -8,6 +8,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GarminApiError } from "../src/garmin";
+import { CHART_APP_HTML, CHART_UI_URI, MCP_APP_MIME_TYPE } from "../src/chart-app";
+import { CHART_META_KEY } from "../src/charts";
 import { registerTools, SERVER_INFO, SERVER_INSTRUCTIONS } from "../src/tools";
 import { fakeGarmin, spanDays } from "./helpers";
 
@@ -416,5 +418,61 @@ describe("logging", () => {
 		const { call } = await connect();
 		await call("get_activities", { limit: 1000 });
 		expect(toolLogs(spy)).toEqual([]);
+	});
+});
+
+describe("charts (MCP Apps)", () => {
+	const rawCall = async (client: Client, name: string, args: Record<string, unknown>) =>
+		(await client.callTool({ name, arguments: args })) as {
+			isError?: boolean;
+			content: { type: string; text: string }[];
+			_meta?: Record<string, unknown>;
+		};
+
+	it("only get_trends and get_day_details point to the chart app", async () => {
+		const { client } = await connect();
+		const { tools } = await client.listTools();
+		const withUi = tools.filter((t) => (t._meta as { ui?: { resourceUri?: string } } | undefined)?.ui?.resourceUri);
+		expect(withUi.map((t) => t.name).sort()).toEqual(["get_day_details", "get_trends"]);
+		for (const t of withUi) expect((t._meta as { ui: { resourceUri: string } }).ui.resourceUri).toBe(CHART_UI_URI);
+	});
+
+	it("serves the app as an MCP Apps resource", async () => {
+		const { client } = await connect();
+		const { resources } = await client.listResources();
+		expect(resources).toEqual([expect.objectContaining({ uri: CHART_UI_URI, mimeType: MCP_APP_MIME_TYPE })]);
+		const read = await client.readResource({ uri: CHART_UI_URI });
+		expect(read.contents[0]).toMatchObject({ uri: CHART_UI_URI, mimeType: MCP_APP_MIME_TYPE, text: CHART_APP_HTML });
+	});
+
+	it("get_trends: the chart rides in _meta, the text the model reads is unchanged", async () => {
+		const { client } = await connect((path, query) =>
+			path.startsWith("/sleep-service")
+				? [
+						{ calendarDate: String(query.startDate), sleepTimeSeconds: 7 * 3600 },
+						{ calendarDate: String(query.endDate), sleepTimeSeconds: 8 * 3600 },
+					]
+				: [],
+		);
+		const result = await rawCall(client, "get_trends", { startDate: "2026-01-01", endDate: "2026-02-28", period: "month", metrics: ["sleep"] });
+		const charts = result._meta?.[CHART_META_KEY];
+		expect(typeof charts).toBe("string");
+		expect(charts as string).toContain('<figure class="chart">');
+		const data = JSON.parse(result.content[0]!.text);
+		expect(data.periods).toHaveLength(2);
+		expect(result.content[0]!.text).not.toContain("<svg");
+	});
+
+	it("no chart when there's nothing to plot, and none on errors", async () => {
+		const empty = await connect(() => []);
+		const r1 = await rawCall(empty.client, "get_trends", { startDate: "2026-01-01", endDate: "2026-02-28", metrics: ["sleep"] });
+		expect(r1._meta?.[CHART_META_KEY]).toBeUndefined();
+
+		const failing = await connect((path) => {
+			throw new GarminApiError("Rate limited", 429, path);
+		});
+		const r2 = await rawCall(failing.client, "get_day_details", { date: "2026-11-25" });
+		expect(r2.isError).toBe(true);
+		expect(r2._meta?.[CHART_META_KEY]).toBeUndefined();
 	});
 });

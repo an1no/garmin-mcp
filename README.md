@@ -179,6 +179,12 @@ Example prompts:
 - `@Garmin Connect what are my heart rate zones for running?`
 - `@Garmin Connect how many calories and how much protein did I log this week?`
 
+**Charts.** In clients that support [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps), such as
+Claude, `get_trends` and `get_day_details` also show interactive charts right in the chat: sleep, resting heart
+rate, HRV, steps, stress, distance, VO2 max and weight per week or month, or heart rate (with its min-max band),
+overnight HRV and SpO2 through a day. They follow the light or dark theme, and hovering shows each value. Other
+clients, Gemini included, show the same numbers as text, as before.
+
 `get_trends` exists so that questions about long periods stay fast and accurate: instead of sending the model a year
 of days (hundreds of records), the server sends one row per week or month plus an overall summary.
 
@@ -444,6 +450,8 @@ src/
   tools.ts               The twelve MCP tools: schemas, descriptions, argument handling, error messages
   trends.ts              get_trends: chunked fetching and weekly/monthly aggregation
   fitness.ts             get_vo2max, get_weight, get_fitness_profile: fetching and shaping
+  charts.ts              SVG charts for get_trends and get_day_details (sent in the result's _meta)
+  chart-app.ts           The MCP App (sandboxed HTML) that shows those charts in Claude and other hosts
   workouts.ts            Planned workout of an activity, decoded into readable steps and targets
   nutrition.ts           get_nutrition: one day in detail, or daily totals for up to 14 days
   parts.ts               Runs several Garmin requests; one failing part is reported, not fatal

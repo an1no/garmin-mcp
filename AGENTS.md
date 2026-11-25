@@ -110,7 +110,8 @@ remains.
   (password check, lockout), `src/mcp.ts` (Durable Object: Garmin client, timezone), `src/tools.ts` (the MCP
   tools: schemas, argument handling, errors), `src/trends.ts` (`get_trends` fetching and aggregation),
   `src/fitness.ts` (`get_vo2max`, `get_weight`, `get_fitness_profile`), `src/nutrition.ts` (`get_nutrition`),
-  `src/intraday.ts` (`get_day_details`), `src/workouts.ts` (planned workouts for `get_activity_details`),
+  `src/charts.ts` + `src/chart-app.ts` (MCP Apps charts for
+  `get_trends`/`get_day_details`), `src/intraday.ts` (`get_day_details`), `src/workouts.ts` (planned workouts for `get_activity_details`),
   `src/parts.ts` (parallel requests with per-part errors, chunking), `src/profile.ts`
   (timezone: `TIMEZONE` or the Garmin profile's),
   `src/garmin.ts` (Garmin API client, token cache),

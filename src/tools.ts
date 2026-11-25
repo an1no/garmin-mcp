@@ -5,6 +5,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { CHART_APP_HTML, CHART_UI_URI, MCP_APP_MIME_TYPE } from "./chart-app";
+import { CHART_META_KEY, dayCharts, trendCharts } from "./charts";
 import { fetchFitnessProfile, fetchVo2Max, fetchWeight } from "./fitness";
 import {
 	ACTIVITY_UNITS,
@@ -27,7 +29,7 @@ import { describeError } from "./parts";
 import { collectTrends, DEFAULT_TREND_METRICS, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
 import { fetchActivityWorkouts } from "./workouts";
 
-export const SERVER_INFO = { name: "garmin-connect", version: "1.5.0" } as const;
+export const SERVER_INFO = { name: "garmin-connect", version: "1.6.0" } as const;
 
 export const SERVER_INSTRUCTIONS =
 	"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery, " +
@@ -72,6 +74,20 @@ async function rangeEndingToday(
 }
 
 export function registerTools(server: McpServer, ctx: ToolContext): void {
+	// ------------------------------------------------------------------ chart app (MCP Apps)
+	server.registerResource(
+		"garmin-charts",
+		CHART_UI_URI,
+		{
+			title: "Garmin charts",
+			description: "Interactive charts for get_trends and get_day_details, for hosts that support MCP Apps.",
+			mimeType: MCP_APP_MIME_TYPE,
+		},
+		async () => ({
+			contents: [{ uri: CHART_UI_URI, mimeType: MCP_APP_MIME_TYPE, text: CHART_APP_HTML, _meta: { ui: { prefersBorder: true } } }],
+		}),
+	);
+
 	// ------------------------------------------------------------------ activities
 	server.registerTool(
 		"get_activities",
@@ -367,6 +383,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 					.describe("Length of each averaged interval in minutes, 5-60 (default 15). HRV is measured every 5 minutes."),
 			},
 			annotations: { title: "Get Garmin day details", ...READ_ONLY },
+			// MCP Apps hosts (e.g. Claude) show the chart app next to the result; others ignore this.
+			_meta: { ui: { resourceUri: CHART_UI_URI } },
 		},
 		async ({ date: day, include, intervalMinutes }) =>
 			run("get_day_details", async () => {
@@ -378,7 +396,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 					intervalMinutes,
 					parts: [...new Set(include ?? DAY_DETAIL_PARTS)],
 				});
-			}),
+			}, dayCharts),
 	);
 
 	// ------------------------------------------------------------------ fitness profile
@@ -519,6 +537,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 					.optional(),
 			},
 			annotations: { title: "Get Garmin trends", ...READ_ONLY },
+			// MCP Apps hosts (e.g. Claude) show the chart app next to the result; others ignore this.
+			_meta: { ui: { resourceUri: CHART_UI_URI } },
 		},
 		async ({ startDate, endDate, period, metrics, activityType }) =>
 			run("get_trends", async () => {
@@ -537,7 +557,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 					metrics: [...new Set(metrics ?? DEFAULT_TREND_METRICS)],
 					activityType,
 				});
-			}),
+			}, trendCharts),
 	);
 }
 
@@ -579,12 +599,26 @@ function partialErrors(data: unknown): string[] | undefined {
 }
 
 /** Runs a tool body, converts its result (or error) into an MCP tool result and logs the outcome. */
-async function run(tool: string, body: () => Promise<unknown>): Promise<CallToolResult> {
+async function run(
+	tool: string,
+	body: () => Promise<unknown>,
+	chart?: (data: Record<string, unknown>) => string | undefined,
+): Promise<CallToolResult> {
 	const started = Date.now();
 	try {
 		const data = await body();
 		logToolCall({ tool, ok: true, durationMs: Date.now() - started, partialErrors: partialErrors(data) });
-		return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+		const result: CallToolResult = { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+		if (chart && data && typeof data === "object") {
+			try {
+				const svg = chart(data as Record<string, unknown>);
+				// For MCP Apps hosts only (chart-app.ts); not part of what the model reads.
+				if (svg) result._meta = { [CHART_META_KEY]: svg };
+			} catch (error) {
+				console.error("Chart rendering failed", error);
+			}
+		}
+		return result;
 	} catch (error) {
 		let message: string;
 		let errorKind: "garmin" | "invalid_input" | "timeout" | "unexpected";

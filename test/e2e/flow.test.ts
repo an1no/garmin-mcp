@@ -248,6 +248,13 @@ describe("connecting a client", () => {
 		const list = await mcp.send("tools/list");
 		expect(list.result.tools).toHaveLength(12);
 
+		// MCP Apps: get_trends points to the chart app, which the server serves as a resource.
+		const trends = list.result.tools.find((t: { name: string }) => t.name === "get_trends");
+		expect(trends._meta.ui.resourceUri).toBe("ui://garmin-mcp/charts.html");
+		const app = await mcp.send("resources/read", { uri: "ui://garmin-mcp/charts.html" });
+		expect(app.result.contents[0].mimeType).toBe("text/html;profile=mcp-app");
+		expect(app.result.contents[0].text).toContain("ui/initialize");
+
 		const call = await mcp.send("tools/call", { name: "get_sleep_data", arguments: { date: "2026-11-25" } });
 		expect(call.result.isError ?? false).toBe(false);
 		const sleep = JSON.parse(call.result.content[0].text);
