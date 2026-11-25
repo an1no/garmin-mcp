@@ -183,6 +183,7 @@ Garmin emails you about a week before the key expires. See [Renewing the Garmin 
 | `get_weight` | Weight, BMI, body fat and water %, muscle and bone mass, visceral fat, metabolic age: first/latest/lowest/highest, change, average, weight goal, daily values or monthly averages | Up to 1 year (default 90 days) |
 | `get_fitness_profile` | Fitness Age with its components (e.g. vigorous days, resting heart rate, BMI), each with its target and the Fitness Age reachable by meeting it; heart rate zones 1-5 in bpm per sport, max/resting/lactate-threshold heart rate | As of one date |
 | `get_nutrition` | Food logged in Garmin Connect: calories, carbs, protein, fat against the goals; for one day each meal and its foods | One day, or up to 14 days |
+| `get_menstrual_cycle` | **Opt-in, off by default** (see [Cycle tracking](#cycle-tracking-opt-in)). Day in cycle, cycle start, predicted length, period days, fertile window and luteal phase start as day numbers, predicted ovulation, days until the next phase, pregnancy week; the day's logged flow, symptoms and moods | One day |
 
 Example prompts:
 
@@ -271,9 +272,23 @@ Found a security problem? Please report it privately, as described in [SECURITY.
 | Deploy after changing code | `npm run check`, then `npm run deploy` (or `npm run setup`) |
 | Renew the Garmin key | `npm run setup -- --update-key` |
 | Change the admin password | `npx wrangler secret put MCP_ADMIN_PASSWORD` |
+| Turn cycle tracking on or off | Set `CYCLE_TRACKING` in `wrangler.jsonc` to `"on"` or `"off"`, then `npm run deploy` (see [Cycle tracking](#cycle-tracking-opt-in)) |
 | Change the timezone | By default (`"TIMEZONE": "auto"`) it follows your Garmin profile, re-read once a day. To force one, set `TIMEZONE` in `wrangler.jsonc` (e.g. `Europe/Berlin`), then `npm run deploy` |
 | Watch live logs | `npx wrangler tail`, or the dashboard (see [Logs](#logs)) |
 | Save your changes to GitHub | `git add -A`, `git commit -m "Describe what changed"`, `git push` |
+
+### Cycle tracking (opt-in)
+
+`get_menstrual_cycle` reads Garmin Connect's menstrual cycle tracking. It's **off by default**: while
+`CYCLE_TRACKING` in `wrangler.jsonc` is `"off"`, the tool isn't registered, so Gemini or Claude can't see or call
+it. To turn it on, set `"CYCLE_TRACKING": "on"` and run `npm run deploy` (or choose `on` in the Deploy to
+Cloudflare form). The approval page then lists cycle tracking among the data an app gets.
+
+When on, it returns the cycle's day numbers (period, fertile window, luteal phase start), the predicted ovulation date,
+days until the next phase, the pregnancy week if Garmin tracks a pregnancy, and the day's logged flow, symptoms and
+moods. It deliberately leaves out sexual activity, sex drive, discharge and free-text notes, and Garmin's cycle
+analysis. Garmin reports the current phase only as an undocumented number, so the tool gives the day numbers instead
+of guessing phase names.
 
 ### Logs
 
@@ -475,6 +490,7 @@ src/
   fitness.ts             get_vo2max, get_weight, get_fitness_profile: fetching and shaping
   charts.ts              SVG charts for get_trends and get_day_details (sent in the result's _meta)
   chart-app.ts           The MCP App (sandboxed HTML) that shows those charts in Claude and other hosts
+  cycle.ts               get_menstrual_cycle (opt-in via CYCLE_TRACKING)
   workouts.ts            Planned workout of an activity, decoded into readable steps and targets
   nutrition.ts           get_nutrition: one day in detail, or daily totals for up to 14 days
   parts.ts               Runs several Garmin requests; one failing part is reported, not fatal

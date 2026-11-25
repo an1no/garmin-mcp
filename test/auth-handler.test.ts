@@ -7,7 +7,7 @@ const PASSWORD = "correct horse battery staple";
 const ORIGIN = "https://garmin-mcp.example.workers.dev";
 const AUTHORIZE = `${ORIGIN}/authorize?response_type=code&client_id=c1&redirect_uri=https%3A%2F%2Fgemini.google.com%2Fcb&scope=garmin%3Aread&state=s1`;
 
-function makeEnv(overrides: { password?: string; oauth?: Record<string, unknown> } = {}) {
+function makeEnv(overrides: { password?: string; oauth?: Record<string, unknown>; cycleTracking?: string } = {}) {
 	const authRequest = { clientId: "c1", redirectUri: "https://gemini.google.com/cb", scope: ["garmin:read"], state: "s1" };
 	const oauth = {
 		parseAuthRequest: vi.fn(async () => authRequest),
@@ -31,6 +31,7 @@ function makeEnv(overrides: { password?: string; oauth?: Record<string, unknown>
 	const kv = new FakeKV();
 	const env = {
 		MCP_ADMIN_PASSWORD: overrides.password ?? PASSWORD,
+		CYCLE_TRACKING: overrides.cycleTracking ?? "off",
 		GARMIN_PERSONAL_API_KEY: "unused",
 		TIMEZONE: "auto",
 		OAUTH_KV: kv.asKV(),
@@ -252,5 +253,16 @@ describe("logging", () => {
 		for (let i = 0; i < 6; i++) await call(env, post({ handle: "h", decision: "approve", password: `wrong-${i}` }));
 		expect(authLogs(spy).at(-1)).toMatchObject({ event: "authorize", outcome: "locked_out" });
 		expect(authLogs(spy).at(-1)!.retryAfterSeconds).toBeGreaterThan(0);
+	});
+});
+
+describe("approval page and cycle tracking", () => {
+	it("mentions cycle data only when CYCLE_TRACKING is on", async () => {
+		const off = await (await call(makeEnv().env, new Request(AUTHORIZE))).text();
+		expect(off).not.toContain("menstrual");
+		const on = await (await call(makeEnv({ cycleTracking: "on" }).env, new Request(AUTHORIZE))).text();
+		expect(on).toContain("logged food and menstrual cycle tracking");
+		const wrong = await (await call(makeEnv({ cycleTracking: "on" }).env, post({ handle: "h", decision: "approve", password: "nope" }))).text();
+		expect(wrong).toContain("menstrual cycle tracking");
 	});
 });

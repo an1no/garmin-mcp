@@ -1,6 +1,6 @@
 {
   "name": "garmin-mcp",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "description": "Remote MCP server (Cloudflare Workers + OAuth 2.0/DCR) exposing Garmin Connect Personal API data to Gemini and other MCP clients.",
   "license": "MIT",
@@ -60,6 +60,9 @@
       },
       "TIMEZONE": {
         "description": "Leave as `auto` to use the time zone from your Garmin profile, or name one (e.g. `Europe/Berlin`), so \"today\" means today where you live."
+      },
+      "CYCLE_TRACKING": {
+        "description": "Leave as `off`. Set to `on` only if you track a menstrual cycle in Garmin Connect and want it available in your chats (adds the get_menstrual_cycle tool)."
       }
     }
   }

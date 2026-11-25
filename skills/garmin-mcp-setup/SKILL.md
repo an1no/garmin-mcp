@@ -20,8 +20,9 @@ rules in front of you.
 2. **Never print, log or echo secret values**, and never read `.secrets.env` or `admin-password.txt` back into the
    conversation. Refer to the password by its file name.
 3. **Never commit** `.secrets.env`, `.dev.vars` or `admin-password.txt`.
-4. **Ask before anything account-wide**, such as registering a workers.dev subdomain or creating API tokens.
-5. The user completes every login and approval themselves (Cloudflare login in the browser, Garmin key creation,
+4. **Leave `CYCLE_TRACKING` off** unless the user explicitly asks for menstrual cycle data.
+5. **Ask before anything account-wide**, such as registering a workers.dev subdomain or creating API tokens.
+6. The user completes every login and approval themselves (Cloudflare login in the browser, Garmin key creation,
    the server's approval page in Gemini or Claude).
 
 ## What the user needs
@@ -70,4 +71,6 @@ rules in front of you.
   terminal to type into.
 - **Something looks wrong:** the README's Troubleshooting and Logs sections; Cloudflare's Observability shows one
   `tool_call` line per tool call (never any health data).
+- **Menstrual cycle data:** off by default. Only if the user asks: set `CYCLE_TRACKING` to `"on"` in
+  `wrangler.jsonc`, then `npm run deploy`.
 - **Without a terminal:** the README's "Deploy to Cloudflare" button deploys a copy from the browser.

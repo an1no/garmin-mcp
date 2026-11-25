@@ -7,6 +7,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { CHART_APP_HTML, CHART_UI_URI, MCP_APP_MIME_TYPE } from "./chart-app";
 import { CHART_META_KEY, dayCharts, trendCharts } from "./charts";
+import { fetchCycleDay } from "./cycle";
 import { fetchFitnessProfile, fetchVo2Max, fetchWeight } from "./fitness";
 import {
 	ACTIVITY_UNITS,
@@ -29,7 +30,7 @@ import { describeError } from "./parts";
 import { collectTrends, DEFAULT_TREND_METRICS, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
 import { fetchActivityWorkouts } from "./workouts";
 
-export const SERVER_INFO = { name: "garmin-connect", version: "1.6.0" } as const;
+export const SERVER_INFO = { name: "garmin-connect", version: "1.7.0" } as const;
 
 export const SERVER_INSTRUCTIONS =
 	"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery, " +
@@ -73,7 +74,13 @@ async function rangeEndingToday(
 	return resolveRange(startDate ?? addDays(end, -(defaultDays - 1)), end, { today: todayDate, defaultDays, maxDays: 366 });
 }
 
-export function registerTools(server: McpServer, ctx: ToolContext): void {
+/** Optional tools, off unless the deployment turns them on. */
+export interface ToolOptions {
+	/** Register get_menstrual_cycle (CYCLE_TRACKING = "on"). */
+	cycleTracking?: boolean;
+}
+
+export function registerTools(server: McpServer, ctx: ToolContext, options: ToolOptions = {}): void {
 	// ------------------------------------------------------------------ chart app (MCP Apps)
 	server.registerResource(
 		"garmin-charts",
@@ -454,6 +461,32 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 				return fetchNutrition(ctx.garmin(), { startDate: calendarDate, endDate: calendarDate });
 			}),
 	);
+
+	// ------------------------------------------------------------------ menstrual cycle (opt-in)
+	if (options.cycleTracking) {
+		server.registerTool(
+			"get_menstrual_cycle",
+			{
+				title: "Get Garmin menstrual cycle",
+				description:
+					"Menstrual cycle on a date, from Garmin Connect's cycle tracking: day in cycle, cycle start, predicted " +
+					"length, period days, fertile window and luteal phase start (as day numbers), predicted ovulation date, " +
+					"days until the next phase, pregnancy week if tracking a pregnancy, and the day's logged flow, symptoms " +
+					"and moods. Only has data if the user tracks a cycle in Garmin Connect.",
+				inputSchema: {
+					date: date("Calendar date, YYYY-MM-DD. Defaults to today.").optional(),
+				},
+				annotations: { title: "Get Garmin menstrual cycle", ...READ_ONLY },
+			},
+			async ({ date: day }) =>
+				run("get_menstrual_cycle", async () => {
+					const todayDate = await today(ctx);
+					const calendarDate = day ?? todayDate;
+					assertDate(calendarDate, "date");
+					return fetchCycleDay(ctx.garmin(), calendarDate, todayDate);
+				}),
+		);
+	}
 
 	// ------------------------------------------------------------------ VO2 max
 	server.registerTool(

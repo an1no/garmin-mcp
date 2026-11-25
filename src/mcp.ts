@@ -1,5 +1,6 @@
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { cycleTrackingEnabled } from "./cycle";
 import { GarminClient } from "./garmin";
 import { resolveTimeZone } from "./profile";
 import { registerTools, SERVER_INFO, SERVER_INSTRUCTIONS } from "./tools";
@@ -34,6 +35,10 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 	}
 
 	async init(): Promise<void> {
-		registerTools(this.server, { garmin: () => this.garmin(), zone: () => this.zone() });
+		registerTools(
+			this.server,
+			{ garmin: () => this.garmin(), zone: () => this.zone() },
+			{ cycleTracking: cycleTrackingEnabled(this.env.CYCLE_TRACKING) },
+		);
 	}
 }

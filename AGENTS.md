@@ -20,6 +20,7 @@ The human-facing guide is [README.md](README.md). This file tells you how to dri
    and reuses the bound one later. Keep `secrets.required` as it is.
 6. Ask before anything that affects the user's account beyond this deploy, e.g. registering a workers.dev
    subdomain, which is account-wide.
+7. **Leave `CYCLE_TRACKING` off** unless the user explicitly asks for menstrual cycle data in their chats.
 
 ## Setup procedure
 
@@ -111,7 +112,7 @@ remains.
   tools: schemas, argument handling, errors), `src/trends.ts` (`get_trends` fetching and aggregation),
   `src/fitness.ts` (`get_vo2max`, `get_weight`, `get_fitness_profile`), `src/nutrition.ts` (`get_nutrition`),
   `src/charts.ts` + `src/chart-app.ts` (MCP Apps charts for
-  `get_trends`/`get_day_details`), `src/intraday.ts` (`get_day_details`), `src/workouts.ts` (planned workouts for `get_activity_details`),
+  `get_trends`/`get_day_details`), `src/cycle.ts` (`get_menstrual_cycle`, opt-in), `src/intraday.ts` (`get_day_details`), `src/workouts.ts` (planned workouts for `get_activity_details`),
   `src/parts.ts` (parallel requests with per-part errors, chunking), `src/profile.ts`
   (timezone: `TIMEZONE` or the Garmin profile's),
   `src/garmin.ts` (Garmin API client, token cache),

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GarminApiError } from "../src/garmin";
 import { CHART_APP_HTML, CHART_UI_URI, MCP_APP_MIME_TYPE } from "../src/chart-app";
 import { CHART_META_KEY } from "../src/charts";
-import { registerTools, SERVER_INFO, SERVER_INSTRUCTIONS } from "../src/tools";
+import { registerTools, SERVER_INFO, SERVER_INSTRUCTIONS, type ToolOptions } from "../src/tools";
 import { fakeGarmin, spanDays } from "./helpers";
 
 const ALL_TOOLS = [
@@ -30,10 +30,10 @@ const ALL_TOOLS = [
 
 type Handler = (path: string, query: Record<string, unknown>) => unknown;
 
-async function connect(handler: Handler = () => [], zone = "UTC") {
+async function connect(handler: Handler = () => [], zone = "UTC", options: ToolOptions = {}) {
 	const garmin = fakeGarmin(handler);
 	const server = new McpServer(SERVER_INFO, { instructions: SERVER_INSTRUCTIONS });
-	registerTools(server, { garmin: () => garmin.client, zone: async () => zone });
+	registerTools(server, { garmin: () => garmin.client, zone: async () => zone }, options);
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 	await server.connect(serverTransport);
 	const client = new Client({ name: "test-client", version: "1.0.0" });
@@ -474,5 +474,29 @@ describe("charts (MCP Apps)", () => {
 		const r2 = await rawCall(failing.client, "get_day_details", { date: "2026-11-25" });
 		expect(r2.isError).toBe(true);
 		expect(r2._meta?.[CHART_META_KEY]).toBeUndefined();
+	});
+});
+
+describe("get_menstrual_cycle (opt-in)", () => {
+	it("isn't offered unless the deployment turns it on", async () => {
+		const off = await connect();
+		expect((await off.client.listTools()).tools.map((x) => x.name)).not.toContain("get_menstrual_cycle");
+		const on = await connect(() => ({}), "UTC", { cycleTracking: true });
+		const names = (await on.client.listTools()).tools.map((x) => x.name);
+		expect(names).toContain("get_menstrual_cycle");
+		expect(names).toHaveLength(13);
+	});
+
+	it("today in the user's zone, with today as Garmin's reference date", async () => {
+		freezeDate("2026-11-25T21:30:00Z");
+		const { call, garmin } = await connect(() => ({ daySummary: { dayInCycle: 3 } }), "Indian/Mauritius", { cycleTracking: true });
+		const r = (await call("get_menstrual_cycle")).json();
+		expect(r).toMatchObject({ date: "2026-11-26", cycle: { dayInCycle: 3 } });
+		expect(garmin.calls[0]).toEqual({
+			path: "/periodichealth-service/menstrualcycle/dayview/2026-11-26",
+			query: { todayDate: "2026-11-26", skipbm: true, includeAnalysis: false },
+		});
+		await call("get_menstrual_cycle", { date: "2026-11-01" });
+		expect(garmin.calls[1]!.query).toMatchObject({ todayDate: "2026-11-26" });
 	});
 });

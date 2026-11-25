@@ -8,6 +8,7 @@
  */
 
 import { AuthorizationError, CimdFetchError, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { cycleTrackingEnabled } from "./cycle";
 import { consentPage, homePage, htmlHeaders, messagePage } from "./html";
 import type { AuthProps } from "./mcp";
 import {
@@ -63,7 +64,14 @@ async function showConsent(request: Request, env: AuthEnv): Promise<Response> {
 	const authRequest = await oauth.parseAuthRequest(request);
 	const details = await oauth.describeConsent(authRequest); // before beginConsent: a failed lookup leaves nothing in KV
 	const consent = await oauth.beginConsent(authRequest);
-	return new Response(consentPage(details, consent.handle), { headers: htmlHeaders(consent.headers) });
+	return new Response(consentPage(details, consent.handle, undefined, consentOptions(env)), {
+		headers: htmlHeaders(consent.headers),
+	});
+}
+
+/** What the approval page should mention, from the deployment's settings. */
+function consentOptions(env: AuthEnv): { cycleTracking: boolean } {
+	return { cycleTracking: cycleTrackingEnabled(env.CYCLE_TRACKING) };
 }
 
 async function submitConsent(request: Request, env: AuthEnv): Promise<Response> {
@@ -101,7 +109,7 @@ async function submitConsent(request: Request, env: AuthEnv): Promise<Response> 
 		// The authorization request is re-read from this POST's URL (the form posts back to it).
 		const authRequest = await oauth.parseAuthRequest(request);
 		const details = await oauth.describeConsent(authRequest);
-		return new Response(consentPage(details, handle, "Incorrect password. Please try again."), {
+		return new Response(consentPage(details, handle, "Incorrect password. Please try again.", consentOptions(env)), {
 			status: 401,
 			headers: htmlHeaders(),
 		});
