@@ -1,5 +1,5 @@
-# Dependabot opens pull requests for dependency updates; CI (type check, unit tests, dry-run
-# bundle) runs on each one, so a broken update shows up red before anything is merged.
+# Dependabot opens pull requests for dependency updates; CI (lockfile check, type check, tests,
+# dry-run bundle) runs on each one, so a broken update shows up red before anything is merged.
 # Nothing is merged or deployed automatically.
 version: 2
 updates:
@@ -21,6 +21,10 @@ updates:
     ignore:
       # MCP SDK 2.x is a different API (the server uses 1.x with McpAgent); upgrade by hand.
       - dependency-name: "@modelcontextprotocol/sdk"
+        update-types: ["version-update:semver-major"]
+      # The types follow the oldest Node.js the project supports (engines: >=22.12), so code can't
+      # use newer Node APIs by accident. Move this up only when the minimum Node version goes up.
+      - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
