@@ -94,6 +94,14 @@ export function formatTimestamp(value: unknown, kind: "local" | "gmt"): string |
 	return String(value);
 }
 
+/** Garmin's ConnectDate ({ date, localDate }) or a plain date string -> YYYY-MM-DD. */
+export function connectDate(value: unknown): string | undefined {
+	if (typeof value === "string") return value.slice(0, 10);
+	const d = obj(value);
+	const s = typeof d.localDate === "string" ? d.localDate : typeof d.date === "string" ? d.date : undefined;
+	return s?.slice(0, 10);
+}
+
 // ---------------------------------------------------------------------------
 // Numbers & cleanup
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { CHART_APP_HTML, CHART_UI_URI, MCP_APP_MIME_TYPE } from "./chart-app";
 import { CHART_META_KEY, dayCharts, trendCharts } from "./charts";
-import { fetchCycleDay } from "./cycle";
+import { CYCLE_HISTORY_MAX, fetchCycle } from "./cycle";
 import { fetchFitnessProfile, fetchVo2Max, fetchWeight } from "./fitness";
 import {
 	ACTIVITY_UNITS,
@@ -27,14 +27,15 @@ import { GarminApiError, type GarminClient } from "./garmin";
 import { DAY_DETAIL_PARTS, fetchDayDetails } from "./intraday";
 import { fetchNutrition, NUTRITION_MAX_DAYS } from "./nutrition";
 import { describeError } from "./parts";
+import { fetchHealthSnapshots, SNAPSHOT_DEFAULT_DAYS } from "./snapshots";
 import { collectTrends, DEFAULT_TREND_METRICS, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
 import { fetchActivityWorkouts } from "./workouts";
 
-export const SERVER_INFO = { name: "garmin-connect", version: "1.7.0" } as const;
+export const SERVER_INFO = { name: "garmin-connect", version: "1.8.0" } as const;
 
 export const SERVER_INSTRUCTIONS =
 	"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery, " +
-	"VO2 max, weight and body composition, Fitness Age, heart rate zones, logged food). Dates are YYYY-MM-DD calendar dates in the user's local time; when a " +
+	"VO2 max, weight and body composition, Fitness Age, heart rate zones, logged food, Health Snapshots). Dates are YYYY-MM-DD calendar dates in the user's local time; when a " +
 	"date is omitted, 'today' follows the timezone in the user's Garmin profile. Distances are meters, durations seconds, speeds m/s " +
 	"unless a field name says otherwise. Use get_activities to find activityIds, then get_activity_details for one workout. " +
 	"For questions about longer periods (trends, averages, totals, comparing weeks or months) use get_trends, which " +
@@ -406,6 +407,29 @@ export function registerTools(server: McpServer, ctx: ToolContext, options: Tool
 			}, dayCharts),
 	);
 
+	// ------------------------------------------------------------------ Health Snapshot
+	server.registerTool(
+		"get_health_snapshots",
+		{
+			title: "Get Garmin Health Snapshots",
+			description:
+				"Health Snapshot sessions: the short health readings the user starts on the watch. For each session: date, " +
+				"local start and end time, duration, and the average, lowest and highest heart rate, HRV (RMSSD and SDRR, " +
+				"ms), stress, respiration and SpO2; plus the averages over all sessions in the range. Defaults to the last " +
+				"30 days; up to 366 days per call. Only has data if the user records Health Snapshots.",
+			inputSchema: {
+				startDate: date("Range start (inclusive), YYYY-MM-DD. Defaults to 29 days before endDate.").optional(),
+				endDate: date("Range end (inclusive), YYYY-MM-DD. Defaults to today.").optional(),
+			},
+			annotations: { title: "Get Garmin Health Snapshots", ...READ_ONLY },
+		},
+		async ({ startDate, endDate }) =>
+			run("get_health_snapshots", async () => {
+				const range = await rangeEndingToday(ctx, startDate, endDate, SNAPSHOT_DEFAULT_DAYS);
+				return fetchHealthSnapshots(ctx.garmin(), range);
+			}),
+	);
+
 	// ------------------------------------------------------------------ fitness profile
 	server.registerTool(
 		"get_fitness_profile",
@@ -472,18 +496,27 @@ export function registerTools(server: McpServer, ctx: ToolContext, options: Tool
 					"Menstrual cycle on a date, from Garmin Connect's cycle tracking: day in cycle, cycle start, predicted " +
 					"length, period days, fertile window and luteal phase start (as day numbers), predicted ovulation date, " +
 					"days until the next phase, pregnancy week if tracking a pregnancy, and the day's logged flow, symptoms " +
-					"and moods. Only has data if the user tracks a cycle in Garmin Connect.",
+					"and moods. Set history to also get the completed cycles before it (start, end, length, period days) " +
+					"with the average, shortest and longest cycle, e.g. for 'is my cycle regular?'. Only has data if the " +
+					"user tracks a cycle in Garmin Connect.",
 				inputSchema: {
 					date: date("Calendar date, YYYY-MM-DD. Defaults to today.").optional(),
+					history: z
+						.number()
+						.int()
+						.min(1)
+						.max(CYCLE_HISTORY_MAX)
+						.describe(`Also return this many completed cycles before the current one, 1-${CYCLE_HISTORY_MAX}, e.g. 6.`)
+						.optional(),
 				},
 				annotations: { title: "Get Garmin menstrual cycle", ...READ_ONLY },
 			},
-			async ({ date: day }) =>
+			async ({ date: day, history }) =>
 				run("get_menstrual_cycle", async () => {
 					const todayDate = await today(ctx);
 					const calendarDate = day ?? todayDate;
 					assertDate(calendarDate, "date");
-					return fetchCycleDay(ctx.garmin(), calendarDate, todayDate);
+					return fetchCycle(ctx.garmin(), calendarDate, todayDate, history ?? 0);
 				}),
 		);
 	}
@@ -628,6 +661,7 @@ function partialErrors(data: unknown): string[] | undefined {
 	const errors = (data as { errors?: unknown }).errors;
 	if (errors && typeof errors === "object") names.push(...Object.keys(errors));
 	if ("plannedWorkoutError" in data) names.push("plannedWorkout");
+	if ("historyError" in data) names.push("cycleHistory");
 	return names.length ? names : undefined;
 }
 

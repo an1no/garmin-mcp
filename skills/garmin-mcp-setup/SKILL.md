@@ -1,6 +1,6 @@
 ---
 name: garmin-mcp-setup
-description: Sets up the user's own Garmin Connect MCP server (github.com/an1no/garmin-mcp) on their free Cloudflare account and connects it to Gemini or Claude, so the assistant can read their Garmin data (activities, sleep, HRV, Body Battery, VO2 max, weight, Fitness Age, nutrition, trends with charts). Use when the user wants their Garmin or Garmin Connect data in Gemini, Claude or another MCP client, or asks to update this server or renew its Garmin key.
+description: Sets up the user's own Garmin Connect MCP server (github.com/an1no/garmin-mcp) on their free Cloudflare account and connects it to Gemini or Claude, so the assistant can read their Garmin data (activities, sleep, HRV, Body Battery, VO2 max, weight, Fitness Age, nutrition, Health Snapshots, trends with charts). Use when the user wants their Garmin or Garmin Connect data in Gemini, Claude or another MCP client, or asks to update this server or renew its Garmin key.
 license: MIT
 ---
 

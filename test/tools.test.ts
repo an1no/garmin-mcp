@@ -26,6 +26,7 @@ const ALL_TOOLS = [
 	"get_trends",
 	"get_fitness_profile",
 	"get_nutrition",
+	"get_health_snapshots",
 ];
 
 type Handler = (path: string, query: Record<string, unknown>) => unknown;
@@ -58,7 +59,7 @@ function freezeDate(iso: string) {
 afterEach(() => vi.useRealTimers());
 
 describe("server", () => {
-	it("lists exactly the twelve tools, all read-only, with input schemas and descriptions", async () => {
+	it("lists exactly the thirteen tools, all read-only, with input schemas and descriptions", async () => {
 		const { client } = await connect();
 		const { tools } = await client.listTools();
 		expect(tools.map((t) => t.name).sort()).toEqual([...ALL_TOOLS].sort());
@@ -92,6 +93,8 @@ describe("argument validation", () => {
 		["get_trends", { period: "year" }],
 		["get_fitness_profile", { date: "yesterday" }],
 		["get_nutrition", { startDate: "2026-11-01T00:00" }],
+		["get_health_snapshots", { endDate: "tomorrow" }],
+		["get_health_snapshots", { startDate: "2025-01-01", endDate: "2026-11-25" }],
 	])("%s rejects %j without calling Garmin", async (name, args) => {
 		const { call, garmin } = await connect();
 		const result = await call(name, args);
@@ -484,7 +487,7 @@ describe("get_menstrual_cycle (opt-in)", () => {
 		const on = await connect(() => ({}), "UTC", { cycleTracking: true });
 		const names = (await on.client.listTools()).tools.map((x) => x.name);
 		expect(names).toContain("get_menstrual_cycle");
-		expect(names).toHaveLength(13);
+		expect(names).toHaveLength(14);
 	});
 
 	it("today in the user's zone, with today as Garmin's reference date", async () => {
@@ -498,5 +501,77 @@ describe("get_menstrual_cycle (opt-in)", () => {
 		});
 		await call("get_menstrual_cycle", { date: "2026-11-01" });
 		expect(garmin.calls[1]!.query).toMatchObject({ todayDate: "2026-11-26" });
+	});
+});
+
+describe("get_menstrual_cycle history", () => {
+	it("walks back from the cycle's start after the day view", async () => {
+		const { call, garmin } = await connect(
+			(path) =>
+				path.includes("/dayview/")
+					? { daySummary: { dayInCycle: 9, startDate: { localDate: "2026-11-17" } } }
+					: path.endsWith("/2026-11-16")
+						? { startDate: { localDate: "2026-10-19" }, periodLength: 5 }
+						: (() => {
+								throw new GarminApiError("Not found", 404, path);
+							})(),
+			"UTC",
+			{ cycleTracking: true },
+		);
+		const r = (await call("get_menstrual_cycle", { date: "2026-11-25", history: 3 })).json();
+		expect(garmin.calls.map((c) => c.path)).toEqual([
+			"/periodichealth-service/menstrualcycle/dayview/2026-11-25",
+			"/periodichealth-service/menstrualcycle/summary/2026-11-16",
+			"/periodichealth-service/menstrualcycle/summary/2026-10-18",
+		]);
+		expect(r.history).toMatchObject({ cyclesFound: 1, averageCycleLengthDays: 29, cycles: [{ startDate: "2026-10-19", lengthDays: 29 }] });
+	});
+
+	it.each([0, 13, 2.5])("rejects history=%s without calling Garmin", async (history) => {
+		const { call, garmin } = await connect(() => ({}), "UTC", { cycleTracking: true });
+		expect((await call("get_menstrual_cycle", { history })).isError).toBe(true);
+		expect(garmin.calls).toHaveLength(0);
+	});
+
+	it("a failed history request is logged as a partial error, never with dates", async () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const { call } = await connect(
+			(path) => {
+				if (path.includes("/dayview/")) return { daySummary: { startDate: { localDate: "2026-11-17" } } };
+				throw new GarminApiError("Rate limited", 429, path);
+			},
+			"UTC",
+			{ cycleTracking: true },
+		);
+		const r = await call("get_menstrual_cycle", { date: "2026-11-25", history: 2 });
+		expect(r.isError).toBe(false);
+		expect(r.json().historyError).toMatch(/Rate limited/);
+		const logged = spy.mock.calls.map((args) => args[0]).filter((x) => (x as { event?: string })?.event === "tool_call");
+		expect(logged).toEqual([expect.objectContaining({ tool: "get_menstrual_cycle", ok: true, partialErrors: ["cycleHistory"] })]);
+		expect(JSON.stringify(logged)).not.toMatch(/2026-/);
+	});
+});
+
+describe("get_health_snapshots", () => {
+	it("defaults to the 30 days ending today in the user's zone", async () => {
+		freezeDate("2026-11-25T21:30:00Z");
+		const { call, garmin } = await connect(() => [], "Indian/Mauritius");
+		const r = (await call("get_health_snapshots")).json();
+		expect(r).toMatchObject({ startDate: "2026-10-28", endDate: "2026-11-26", count: 0 });
+		expect(garmin.calls.map((c) => c.path)).toEqual([
+			"/wellnessactivity-service/activity/summary/range/2026-10-28/2026-11-24",
+			"/wellnessactivity-service/activity/summary/range/2026-11-25/2026-11-26",
+		]);
+	});
+
+	it("a year is 14 requests of up to 28 days", async () => {
+		const { call, garmin } = await connect(() => []);
+		const r = await call("get_health_snapshots", { startDate: "2025-11-26", endDate: "2026-11-25" });
+		expect(r.isError).toBe(false);
+		expect(garmin.calls).toHaveLength(14);
+		for (const c of garmin.calls) {
+			const [from, until] = c.path.split("/").slice(-2);
+			expect(spanDays(from!, until!)).toBeLessThanOrEqual(28);
+		}
 	});
 });

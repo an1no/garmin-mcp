@@ -260,8 +260,9 @@ describe("approval page and cycle tracking", () => {
 	it("mentions cycle data only when CYCLE_TRACKING is on", async () => {
 		const off = await (await call(makeEnv().env, new Request(AUTHORIZE))).text();
 		expect(off).not.toContain("menstrual");
+		expect(off).toContain("logged food, Health Snapshots).");
 		const on = await (await call(makeEnv({ cycleTracking: "on" }).env, new Request(AUTHORIZE))).text();
-		expect(on).toContain("logged food and menstrual cycle tracking");
+		expect(on).toContain("Health Snapshots and menstrual cycle tracking");
 		const wrong = await (await call(makeEnv({ cycleTracking: "on" }).env, post({ handle: "h", decision: "approve", password: "nope" }))).text();
 		expect(wrong).toContain("menstrual cycle tracking");
 	});

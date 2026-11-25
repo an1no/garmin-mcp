@@ -246,7 +246,7 @@ describe("connecting a client", () => {
 		expect(mcp.sessionId()).toBeTruthy();
 
 		const list = await mcp.send("tools/list");
-		expect(list.result.tools).toHaveLength(12);
+		expect(list.result.tools).toHaveLength(13);
 
 		// MCP Apps: get_trends points to the chart app, which the server serves as a resource.
 		const trends = list.result.tools.find((t: { name: string }) => t.name === "get_trends");

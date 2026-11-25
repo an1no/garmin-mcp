@@ -4,7 +4,7 @@
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/an1no/garmin-mcp)
 
 A small, private server that lets the **Gemini web app** (`gemini.google.com`), **Claude** or any other MCP client read **your
-own Garmin Connect data**: activities, sleep, HRV, Body Battery, VO2 max, weight, Fitness Age, heart rate zones, logged food and daily health stats. It runs on Cloudflare's free
+own Garmin Connect data**: activities, sleep, HRV, Body Battery, VO2 max, weight, Fitness Age, heart rate zones, logged food, Health Snapshots and daily health stats. It runs on Cloudflare's free
 plan, nothing sits in between, and only you can connect apps to it.
 
 You ask Gemini things like *"@Garmin Connect how did I sleep this week?"*, and Gemini calls your server, which reads
@@ -183,7 +183,8 @@ Garmin emails you about a week before the key expires. See [Renewing the Garmin 
 | `get_weight` | Weight, BMI, body fat and water %, muscle and bone mass, visceral fat, metabolic age: first/latest/lowest/highest, change, average, weight goal, daily values or monthly averages | Up to 1 year (default 90 days) |
 | `get_fitness_profile` | Fitness Age with its components (e.g. vigorous days, resting heart rate, BMI), each with its target and the Fitness Age reachable by meeting it; heart rate zones 1-5 in bpm per sport, max/resting/lactate-threshold heart rate | As of one date |
 | `get_nutrition` | Food logged in Garmin Connect: calories, carbs, protein, fat against the goals; for one day each meal and its foods | One day, or up to 14 days |
-| `get_menstrual_cycle` | **Opt-in, off by default** (see [Cycle tracking](#cycle-tracking-opt-in)). Day in cycle, cycle start, predicted length, period days, fertile window and luteal phase start as day numbers, predicted ovulation, days until the next phase, pregnancy week; the day's logged flow, symptoms and moods | One day |
+| `get_health_snapshots` | Health Snapshot sessions started on the watch: date, local time, duration, average/lowest/highest heart rate, HRV (RMSSD and SDRR), stress, respiration and SpO2; averages over the range | Up to 1 year (default 30 days) |
+| `get_menstrual_cycle` | **Opt-in, off by default** (see [Cycle tracking](#cycle-tracking-opt-in)). Day in cycle, cycle start, predicted length, period days, fertile window and luteal phase start as day numbers, predicted ovulation, days until the next phase, pregnancy week; the day's logged flow, symptoms and moods. `history: N` adds the N completed cycles before it (start, length, period days) with the average, shortest and longest | One day, plus up to 12 past cycles |
 
 Example prompts:
 
@@ -198,6 +199,7 @@ Example prompts:
 - `@Garmin Connect what was my heart rate like yesterday afternoon, and how did my HRV look overnight?`
 - `@Garmin Connect did I stick to the planned workout in my last run?`
 - `@Garmin Connect how did my VO2 max and weight change month by month this year?`
+- `@Garmin Connect show my Health Snapshots from this month`
 - `@Garmin Connect how much weight have I lost since January, and how far am I from my goal?`
 - `@Garmin Connect what is my Fitness Age and what would improve it most?`
 - `@Garmin Connect what are my heart rate zones for running?`
@@ -286,7 +288,9 @@ Cloudflare form). The approval page then lists cycle tracking among the data an 
 
 When on, it returns the cycle's day numbers (period, fertile window, luteal phase start), the predicted ovulation date,
 days until the next phase, the pregnancy week if Garmin tracks a pregnancy, and the day's logged flow, symptoms and
-moods. It deliberately leaves out sexual activity, sex drive, discharge and free-text notes, and Garmin's cycle
+moods. With `history` it also counts back through up to 12 earlier cycles: each one's start, end, length and
+period days, plus the average, shortest and longest cycle (predicted cycles and pregnancies are marked and left out
+of the averages). It deliberately leaves out sexual activity, sex drive, discharge and free-text notes, and Garmin's cycle
 analysis. Garmin reports the current phase only as an undocumented number, so the tool gives the day numbers instead
 of guessing phase names.
 
@@ -431,7 +435,7 @@ granted scope and how Garmin errors reach the client.
   caching, retry on 401, error messages, token formats.
 - **Every tool's data handling:** date ranges and limits, chunking (sleep 31 days, others 28), weekly/monthly
   aggregation, unit conversion (grams to kg), local times and timezone handling, partial failures.
-- **The MCP layer:** each of the twelve tools is called through a real MCP client and server (in-memory transport):
+- **The MCP layer:** each of the thirteen tools (plus the opt-in cycle tool) is called through a real MCP client and server (in-memory transport):
   the tool list and annotations, argument validation, how arguments become Garmin requests, defaults that depend on
   "today", and how errors reach the model.
 
@@ -485,14 +489,15 @@ src/
   security.ts            Constant-time password check and KV-backed brute-force lockout
   html.ts                HTML templates and security headers for the auth pages
   mcp.ts                 GarminMCP (McpAgent Durable Object): Garmin client, timezone, registers the tools
-  tools.ts               The twelve MCP tools: schemas, descriptions, argument handling, error messages
+  tools.ts               The MCP tools: schemas, descriptions, argument handling, error messages
   trends.ts              get_trends: chunked fetching and weekly/monthly aggregation
   fitness.ts             get_vo2max, get_weight, get_fitness_profile: fetching and shaping
   charts.ts              SVG charts for get_trends and get_day_details (sent in the result's _meta)
   chart-app.ts           The MCP App (sandboxed HTML) that shows those charts in Claude and other hosts
-  cycle.ts               get_menstrual_cycle (opt-in via CYCLE_TRACKING)
+  cycle.ts               get_menstrual_cycle (opt-in via CYCLE_TRACKING), with optional cycle history
   workouts.ts            Planned workout of an activity, decoded into readable steps and targets
   nutrition.ts           get_nutrition: one day in detail, or daily totals for up to 14 days
+  snapshots.ts           get_health_snapshots: Health Snapshot sessions with avg/min/max per metric
   parts.ts               Runs several Garmin requests; one failing part is reported, not fatal
   intraday.ts            get_day_details: heart rate, overnight HRV and SpO2 per interval, in local time
   profile.ts             Timezone for "today": TIMEZONE, or the Garmin profile's (cached in KV)
@@ -503,7 +508,7 @@ worker-configuration.d.ts  Generated by `wrangler types` (Env + runtime types)
 test/                    Unit tests (Vitest, Node); helpers.ts has the fake KV and Garmin client
 test/e2e/                End-to-end tests in local workerd; Garmin mocked with MSW (network.ts)
 vitest.config.ts         Two test projects: unit (Node) and e2e (Workers runtime, test-only secrets)
-.github/workflows/ci.yml Type check, tests and dry-run bundle on every push and pull request
+.github/workflows/ci.yml Lockfile check, type check, tests and dry-run bundle on every push and pull request
 .github/dependabot.yml   Weekly dependency update pull requests
 AGENTS.md                Instructions for AI coding agents
 skills/garmin-mcp-setup/ Agent Skill that sets the server up (clones the repo, follows AGENTS.md)

@@ -79,7 +79,7 @@ export function consentPage(
 	return layout(
 		`Authorize ${details.clientName}`,
 		`<h1>Connect your Garmin data</h1>
-<p><strong>${name}</strong> wants read-only access to your Garmin Connect data (activities, sleep, HRV, Body Battery, daily health stats, VO2 max, weight, Fitness Age, heart rate zones, logged food${options.cycleTracking ? " and menstrual cycle tracking" : ""}).</p>
+<p><strong>${name}</strong> wants read-only access to your Garmin Connect data (activities, sleep, HRV, Body Battery, daily health stats, VO2 max, weight, Fitness Age, heart rate zones, logged food, Health Snapshots${options.cycleTracking ? " and menstrual cycle tracking" : ""}).</p>
 ${unverified}
 <dl class="facts">
   <div><dt>App</dt><dd>${name}</dd></div>
