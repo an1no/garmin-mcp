@@ -1,15 +1,124 @@
-# Garmin Connect MCP Server (Cloudflare Workers)
+# Garmin Connect in Gemini: your own MCP server on Cloudflare
 
-A private, remote [Model Context Protocol](https://modelcontextprotocol.io) server that gives the Gemini web app
-(`gemini.google.com`), or any other MCP client, **read-only** access to your own Garmin Connect data through the
-[Garmin Connect Personal API](https://developer.garmin.com/gc-developer-program/personal/personal-api).
+A small, private server that lets the **Gemini web app** (`gemini.google.com`), or any other MCP client, read **your
+own Garmin Connect data**: activities, sleep, HRV, Body Battery and daily health stats. It runs on Cloudflare's free
+plan, nothing sits in between, and only you can connect apps to it.
 
-- **Runtime:** Cloudflare Workers + Durable Objects (`agents` / `McpAgent`), free plan friendly
-- **Transport:** Streamable HTTP at `/mcp`
-- **Auth:** OAuth 2.1 with Dynamic Client Registration (DCR), PKCE (S256) and refresh tokens, via
-  `@cloudflare/workers-oauth-provider`. The consent page is protected by your own admin password.
-- **Garmin auth:** your Personal API key is exchanged for an access token, which is cached (encrypted) in KV and
-  reused until shortly before it expires.
+You ask Gemini things like *"@Garmin Connect how did I sleep this week?"*, and Gemini calls your server, which reads
+the data from Garmin's official Personal API.
+
+> **Using an AI coding agent** (Claude Code, Codex, Cursor...)? Clone this repo, open it in the agent and say
+> **"Set this up for me."** The agent's instructions are in [AGENTS.md](AGENTS.md).
+
+---
+
+## Quick start (about 5 minutes)
+
+### What you need
+
+| | What | How to get it |
+| --- | --- | --- |
+| 1 | **Node.js 20 or newer** | Check with `node --version`. Install the LTS version from [nodejs.org](https://nodejs.org) if needed. |
+| 2 | **Git** | Check with `git --version`. Install from [git-scm.com](https://git-scm.com) if needed. |
+| 3 | **A Cloudflare account** (free) | Sign up at [dash.cloudflare.com/sign-up](https://dash.cloudflare.com/sign-up). Setup logs you in through the browser. |
+| 4 | **A Garmin Personal API key** | See [Getting a Garmin Personal API key](#getting-a-garmin-personal-api-key) below. |
+| 5 | **Gemini with custom apps** | A Google account where Gemini offers "Connect to an MCP server" in its settings. |
+
+### Install and deploy
+
+```powershell
+git clone https://github.com/an1no/garmin-mcp.git
+```
+
+```powershell
+cd garmin-mcp
+```
+
+```powershell
+npm install
+```
+
+```powershell
+npm run setup
+```
+
+These commands work the same in PowerShell, Windows Terminal, macOS Terminal and Linux shells. If `git clone` says
+the repository doesn't exist, it's private: ask its owner to add you as a collaborator on GitHub, accept the
+invitation, and try again.
+
+`npm run setup` does everything in six steps and tells you what it's doing:
+
+1. **Prerequisites:** checks Node.js and installs dependencies if needed.
+2. **Cloudflare login:** if you're not logged in, it opens your browser so you can log in (or sign up). If you
+   have several Cloudflare accounts, it asks which one to use.
+3. **Settings:** offers to use your computer's timezone, so "today" means today where you live.
+4. **Secrets:** asks you to paste your Garmin Personal API key (the input is hidden), checks it with Garmin,
+   and generates a strong admin password.
+5. **Deploy:** uploads the server to Cloudflare with both secrets. Cloudflare's storage (KV) is created
+   automatically.
+6. **Check:** makes sure the live server answers, then prints:
+   - your **MCP server URL**, e.g. `https://garmin-mcp.<your-subdomain>.workers.dev/mcp`
+   - your **admin password** (also saved in `admin-password.txt`, which git ignores)
+
+If Cloudflare asks you to **register a workers.dev subdomain** (first time only), pick any free name. It becomes
+part of all your Worker URLs. Then run `npm run setup` again.
+
+Running `npm run setup` again later is safe: it redeploys and keeps your existing password and Garmin key.
+
+### Connect it to Gemini
+
+1. Open [gemini.google.com](https://gemini.google.com), go to **Settings**, find the connected apps section and
+   choose to connect an MCP server. The dialog is titled **"Connect to an MCP server"**; Google moves these menus
+   around from time to time.
+2. Paste your **MCP server URL** (the one ending in `/mcp`).
+3. Leave **"Additional settings"** empty. Gemini registers itself automatically; you don't need a client ID or
+   secret.
+4. A page from your server opens: **"Connect your Garmin data"**. Check that access will be sent to a Google
+   address, enter your **admin password** and select **Approve**.
+5. In a chat, type **`@`**, pick the app, then ask your question.
+
+**Always @-mention the app.** Without it, Gemini answers from general knowledge and says it can't see your Garmin
+data. Gemini's **Developer Mode** panel shows the app's tools (*Tool schemas*) and every call it makes
+(*Event log*), which helps if something looks wrong.
+
+Gemini keeps you connected as long as you use the app at least once every 30 days.
+
+### Getting a Garmin Personal API key
+
+1. Sign in to [Garmin Connect](https://connect.garmin.com) **on the web**.
+2. Open the **Personal API Key** page (Garmin's instructions:
+   [Garmin Connect Personal API](https://developer.garmin.com/gc-developer-program/personal/personal-api)).
+3. Select **Create Key**, accept the terms and choose an expiration: 30 days, 90 days, 180 days or 1 year.
+4. **Copy the key right away.** Garmin shows it only once. If you lose it, delete it and create a new one.
+
+Garmin emails you about a week before the key expires. See [Renewing the Garmin key](#renewing-the-garmin-key).
+
+---
+
+## What you can ask
+
+| Tool | What it returns | Range per call |
+| --- | --- | --- |
+| `get_activities` | Activity list: `activityId`, name, type, start time, distance (m), duration (s), elevation gain (m), average/max heart rate, average speed (m/s), calories, power | Up to 100, paged; filter by dates, type, subtype or text |
+| `get_activity_details` | One workout: speed, heart rate, power, cadence, elevation, training effect and load, temperature, splits. `raw: true` returns everything | One activity |
+| `get_daily_summary` | Steps, distance, calories, resting/min/max heart rate, stress, Body Battery, intensity minutes, floors, SpO2, respiration, hydration | One day, or up to 1 year |
+| `get_sleep_data` | Total sleep, deep/light/REM/awake time, sleep score and sub-scores, overnight heart rate, stress, SpO2, respiration, sleep need | One night, or up to 31 |
+| `get_hrv_data` | Last-night HRV average and 5-minute high, 7-day average, HRV status, baseline range | Last 7 days by default |
+| `get_body_battery` | Charged/drained, start/end/highest/lowest level, the events that moved it, optional intraday timeline | Up to 31 days |
+
+Example prompts:
+
+- `@Garmin Connect list my last 5 activities`
+- `@Garmin Connect how did I sleep last night, compared with the rest of the week?`
+- `@Garmin Connect show my HRV status and Body Battery for the last 7 days`
+- `@Garmin Connect give me the details of my most recent ride`
+
+All tools are read-only: nothing is ever changed in your Garmin account. Dates are `YYYY-MM-DD`; when a question
+has no date, "today" is computed in the `TIMEZONE` set in `wrangler.jsonc`.
+
+---
+
+## How it works
 
 ```
 Gemini ──OAuth (DCR + PKCE)──► /register, /authorize (your password), /token
@@ -18,151 +127,123 @@ Gemini ──Bearer token────────► /mcp ──► GarminMCP (D
                                                      └── OAUTH_KV: OAuth grants (hashed) + Garmin token (AES-GCM)
 ```
 
-## Tools
+There are two "locks":
 
-| Tool | Garmin endpoint | What it returns |
+1. **Gemini → your server (OAuth 2.1).** Gemini registers itself (Dynamic Client Registration), opens your
+   `/authorize` page and gets tokens only after you enter your admin password. Access tokens last 1 hour; refresh
+   tokens keep the connection alive while it's used at least every 30 days.
+2. **Your server → Garmin.** The server trades your Personal API key for a Garmin access token (valid 24 hours),
+   caches it encrypted for about 23 hours, and uses it to read your data.
+
+**Stack:** Cloudflare Workers + Durable Objects (`agents` / `McpAgent`), Streamable HTTP at `/mcp`,
+`@cloudflare/workers-oauth-provider`, `@modelcontextprotocol/sdk`, TypeScript.
+
+### Where your secrets live
+
+| Secret | Where | Notes |
 | --- | --- | --- |
-| `get_activities` | `GET /activitylist-service/activities/search/activities` | Paged activity summaries: `activityId`, `activityName`, `activityType`, `startTimeLocal`, `distance` (m), `duration` (s), `elevationGain` (m), `averageHR`, `maxHR`, `averageSpeed` (m/s), plus calories and power when present. Filters: `start`, `limit`, `startDate`, `endDate`, `activityType`, `activitySubType`, `search`. |
-| `get_activity_details` | `GET /activity-service/activity/{activityId}` | Curated metrics for one workout/ride (speed, HR, power, cadence, elevation, training effect/load, temperature, ...) and split summaries. `raw: true` returns the full payload. |
-| `get_daily_summary` | `GET /usersummary-service/usersummary/daily` (one day) or `GET /usersummary-service/v2/dailysummaries` (range, up to 1 year) | Steps, distance, calories, resting/min/max HR, stress, Body Battery, intensity minutes, floors, SpO2, respiration, hydration. |
-| `get_sleep_data` | `GET /sleep-service/sleep/dailySleep` (one night) or `GET /sleep-service/sleep/dailySleepSummariesByDate` (range, up to 31 days) | Total sleep, deep/light/REM/awake durations, sleep score and sub-scores, overnight HR/stress/SpO2/respiration, sleep need. |
-| `get_hrv_data` | `GET /hrv-service/hrv/daily/{fromDate}/{toDate}` | Last-night average and 5-min high, weekly average, HRV status and baseline range. Defaults to the last 7 days. |
-| `get_body_battery` | `GET /wellness-service/wellness/bodyBattery/reports/daily` | Charged/drained, start/end/high/low level and the events that moved it (range up to 31 days). `includeTimeline: true` adds intraday readings (`chunks` controls resolution). |
+| Garmin Personal API key | Cloudflare, as an encrypted Worker secret | Not in the code, not on GitHub, not on your computer after setup |
+| Admin password | Cloudflare (encrypted secret) + `admin-password.txt` on your computer | Move it to a password manager, then delete the file |
+| Garmin access token | Cloudflare KV, AES-GCM encrypted with a key derived from your API key | Renewed automatically every ~23 hours |
+| Gemini's OAuth tokens | Cloudflare KV, stored only as hashes | |
 
-All dates are `YYYY-MM-DD`. When a tool is called without a date, "today" is computed in the `TIMEZONE` set in
-`wrangler.jsonc` (default `UTC`).
+Cloudflare secrets are write-only: nobody, including you, can read them back. If you lose the admin password, set a
+new one (see [Maintenance](#maintenance)).
 
-## Prerequisites
+### Security
 
-- **Node.js 20+** (`node --version`)
-- A **Cloudflare account** (free plan is fine)
-- A **Garmin Personal API key**: sign in to Garmin Connect on the web, open the *Personal API Key* page,
-  select **Create Key**, accept the terms, choose an expiration period (30 days to 1 year) and copy the key.
-  It is shown only once.
+- **Only you can connect apps.** Any app can register, but it gets a token only after the correct admin password.
+  The comparison is constant-time.
+- **Brute-force protection.** 5 wrong passwords from one IP lock that IP out for 15 minutes; 20 wrong passwords in
+  an hour pause all new approvals for that hour. Connected apps keep working.
+- **Hardened approval page.** Each page works once, for 10 minutes, only in the browser that opened it; it can't be
+  framed and loads no scripts. It shows where tokens will be sent.
+- **One server per person.** Everyone deploys their own copy with their own key; nobody else's server sees your
+  data.
 
-## Setup
+---
 
-Run every command from this folder in PowerShell (or any terminal).
+## Maintenance
 
-### 0. Install dependencies and log in to Cloudflare
+| Task | Command |
+| --- | --- |
+| Deploy after changing code | `npm run check`, then `npm run deploy` (or `npm run setup`) |
+| Renew the Garmin key | `npm run setup -- --update-key` |
+| Change the admin password | `npx wrangler secret put MCP_ADMIN_PASSWORD` |
+| Change the timezone | Edit `TIMEZONE` in `wrangler.jsonc` (e.g. `Europe/Berlin`), then `npm run deploy` |
+| Watch live logs | `npx wrangler tail` |
+| Save your changes to GitHub | `git add -A`, `git commit -m "Describe what changed"`, `git push` |
 
-```powershell
-npm install
-```
+### Renewing the Garmin key
 
-```powershell
-npx wrangler login
-```
-
-### 1. Create the KV namespace and put its id in `wrangler.jsonc`
-
-```powershell
-npx wrangler kv namespace create OAUTH_KV
-```
-
-Wrangler prints something like:
-
-```
-✨ Success!
-{
-  "kv_namespaces": [
-    { "binding": "OAUTH_KV", "id": "0f2ac74b498b48028cb68387c421e279" }
-  ]
-}
-```
-
-If Wrangler asks whether to add the binding to your config for you, answer **No**. Then open `wrangler.jsonc`
-and replace the placeholder with your id:
-
-```jsonc
-"kv_namespaces": [
-	{
-		"binding": "OAUTH_KV",
-		"id": "0f2ac74b498b48028cb68387c421e279" // <- your id
-	}
-],
-```
-
-Optional: while you're in `wrangler.jsonc`, set `"TIMEZONE"` to your IANA timezone (for example
-`"Europe/Berlin"`) so "today" matches your watch.
-
-### 2. Set the secrets
-
-Generate a strong admin password (this is what you'll type on the approval page when Gemini connects):
+Create a new key on Garmin Connect (see [above](#getting-a-garmin-personal-api-key)), then run:
 
 ```powershell
-node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+npm run setup -- --update-key
 ```
 
-`wrangler.jsonc` lists both secrets under `secrets.required`, so Wrangler won't create the Worker without them,
-and `wrangler secret put` can't target a Worker that doesn't exist yet. For the **first** deploy, put them in a
-local file instead. Create `.secrets.env` in this folder (it is git-ignored), with no quotes around the values:
+It asks for the new key, checks it and stores it. The cached Garmin token is tied to the old key, so the new key is
+used immediately. Gemini stays connected.
 
-```
-GARMIN_PERSONAL_API_KEY=your-garmin-personal-api-key
-MCP_ADMIN_PASSWORD=the-password-you-just-generated
-```
+### Revoking access
 
-The password must be at least 8 characters; the approval page refuses to work otherwise. Use the generated one,
-and keep a copy in your password manager: you'll type it when Gemini connects.
-
-### 3. Deploy
+Disconnect the app in Gemini, then delete the stored grants and tokens (the server's single user is `owner`). List
+them first:
 
 ```powershell
-npx wrangler deploy --secrets-file .secrets.env
+npx wrangler kv key list --binding OAUTH_KV --remote --prefix "grant:owner:"
 ```
 
-Then delete the file so the key doesn't sit on disk:
+Then delete all grants and tokens in one go:
 
 ```powershell
-Remove-Item .secrets.env
+foreach ($prefix in "grant:owner:", "token:owner:") { (npx wrangler kv key list --binding OAUTH_KV --remote --prefix $prefix | ConvertFrom-Json) | ForEach-Object { npx wrangler kv key delete --binding OAUTH_KV --remote $_.name } }
 ```
 
-If Wrangler says you need to register a `workers.dev` subdomain, choose one at
-[dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** (it applies to your whole account) and
-deploy again. Later deploys are just `npx wrangler deploy`, and you change a secret with
-`npx wrangler secret put <NAME>`.
+Changing the admin password stops *new* approvals with the old password but doesn't disconnect apps that are
+already approved; delete their grants as shown above.
 
-The output ends with your URL, for example `https://garmin-mcp.<your-subdomain>.workers.dev`.
-Your MCP server URL is that address plus `/mcp`:
+---
+
+## Setup options
 
 ```
-https://garmin-mcp.<your-subdomain>.workers.dev/mcp
+npm run setup -- --help
 ```
 
-Quick checks (open in a browser):
+| Option | Effect |
+| --- | --- |
+| `--name <worker-name>` | Deploy under another Worker name (default: `name` in `wrangler.jsonc`, i.e. `garmin-mcp`) |
+| `--update-key` | Ask for a new Garmin key even if one is already stored |
+| `--skip-garmin-check` | Don't check the key with Garmin before deploying (e.g. if Garmin is down) |
 
-- `https://garmin-mcp.<your-subdomain>.workers.dev/` shows "Garmin MCP server"
-- `https://garmin-mcp.<your-subdomain>.workers.dev/.well-known/oauth-protected-resource/mcp` shows JSON whose
-  `resource` is your `/mcp` URL
+| Environment variable | Effect |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Use an API token instead of the browser login |
+| `CLOUDFLARE_ACCOUNT_ID` | Pick the account when you have several |
+| `GARMIN_PERSONAL_API_KEY` | Provide the key without the prompt |
+| `MCP_ADMIN_PASSWORD` | Use your own admin password (at least 12 characters) instead of a generated one |
 
-### 4. Connect it to Gemini
+**Non-interactive mode** (when there's no terminal to type into, e.g. an AI agent runs the script): if the Garmin
+key isn't provided, setup creates a git-ignored `.secrets.env` with an empty `GARMIN_PERSONAL_API_KEY=` line and
+exits with code **2**. Paste the key after the `=`, save, and run `npm run setup` again. Setup deletes the file after
+deploying and never prints secrets in this mode.
 
-1. Open [gemini.google.com](https://gemini.google.com) and go to **Settings → Apps → Add MCP Server**.
-   Google renames this area from time to time; it may appear as **Connected apps → Add custom app** or
-   **Connectors → + Custom**. Custom MCP apps are only available on eligible accounts.
-2. Enter a name (for example `Garmin`) and the server URL `https://garmin-mcp.<your-subdomain>.workers.dev/mcp`.
-3. Leave the OAuth client ID / client secret fields **empty**. Gemini registers itself automatically through
-   Dynamic Client Registration.
-4. Gemini opens this server's approval page. Check that it says access will be sent to a Google host, enter your
-   `MCP_ADMIN_PASSWORD` and select **Approve**.
-5. Back in Gemini, try:
-   - "List my last 10 Garmin activities."
-   - "How did I sleep last night, and how does it compare to the past week?"
-   - "Show my HRV status and Body Battery for the last 7 days."
-   - "Give me the details of my most recent ride."
+Exit codes: `0` done, `1` error (the message says what to fix), `2` action needed (paste the Garmin key).
 
-Gemini keeps a refresh token, so you only do this once. The connection stays valid as long as Gemini uses it at
-least once every 30 days.
+### Manual setup (without the script)
 
-**If Gemini insists on a client ID and secret**, register a client yourself. Copy the redirect/callback URL that
-Gemini shows in its advanced settings, then run (replace both placeholders):
+1. `npx wrangler login`
+2. Create a git-ignored `.secrets.env` in this folder, with no quotes:
+   ```
+   GARMIN_PERSONAL_API_KEY=your-key
+   MCP_ADMIN_PASSWORD=a-long-random-password
+   ```
+3. `npx wrangler deploy --secrets-file .secrets.env`. The first deploy must include both secrets because
+   `wrangler.jsonc` lists them under `secrets.required`; Wrangler creates the KV namespace by itself.
+4. Delete `.secrets.env`.
 
-```powershell
-Invoke-RestMethod -Method Post -Uri "https://garmin-mcp.<your-subdomain>.workers.dev/register" -ContentType "application/json" -Body '{"client_name":"Gemini","redirect_uris":["<GEMINI_REDIRECT_URL>"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"]}'
-```
-
-Paste the returned `client_id` and `client_secret` into Gemini.
+---
 
 ## Local development
 
@@ -170,130 +251,85 @@ Paste the returned `client_id` and `client_secret` into Gemini.
 Copy-Item .dev.vars.example .dev.vars
 ```
 
-Edit `.dev.vars` with real values (it is git-ignored), then:
+Put real values in `.dev.vars` (git-ignored), then:
 
 ```powershell
 npm run dev
 ```
 
-The server runs at `http://localhost:8787`, with the MCP endpoint at `http://localhost:8787/mcp`. Test it with the
-MCP Inspector, which handles the OAuth flow for you:
+The server runs at `http://localhost:8787`, with MCP at `http://localhost:8787/mcp`. Try it with the MCP Inspector
+(Streamable HTTP transport), which handles the OAuth flow:
 
 ```powershell
 npx @modelcontextprotocol/inspector
 ```
 
-Choose the **Streamable HTTP** transport and the URL `http://localhost:8787/mcp`.
-
-Other scripts:
-
 | Command | What it does |
 | --- | --- |
+| `npm run setup` | Log in, store secrets, deploy and check (safe to re-run) |
+| `npm run deploy` | Deploy the current code |
+| `npm run dev` | Run locally |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run check` | Type-check, then bundle with `wrangler deploy --dry-run` |
+| `npm run check` | Type-check, then test-bundle with `wrangler deploy --dry-run` |
 | `npm run cf-typegen` | Regenerate `worker-configuration.d.ts` after editing `wrangler.jsonc` |
-| `npx wrangler tail` | Stream live logs from the deployed Worker |
 
-## Making changes
-
-Edit the files, check them, deploy, and save the change to GitHub:
-
-```powershell
-npm run check
-```
-
-```powershell
-npx wrangler deploy
-```
-
-```powershell
-git add -A
-```
-
-```powershell
-git commit -m "Describe what changed"
-```
-
-```powershell
-git push
-```
-
-`npm run check` type-checks and test-bundles without deploying. `.gitignore` keeps `node_modules`, `.dev.vars`,
-`.secrets.env` and `admin-password.txt` out of git, so secrets are never committed.
-
-## Security
-
-- **Only you can authorize clients.** Any app can register via DCR, but tokens are issued only after the
-  correct `MCP_ADMIN_PASSWORD` is entered on `/authorize`. The comparison is constant-time.
-- **Brute-force protection.** After 5 wrong passwords from one IP, that IP is locked out for 15 minutes; after
-  20 wrong passwords in total within an hour, all new approvals are paused for that hour. Existing connections
-  keep working during a lockout.
-- **Consent page hardening.** The approval form is bound to the browser that opened it, works once and expires
-  after 10 minutes. The page cannot be framed, loads no scripts and shows where the tokens will be sent.
-- **Read-only.** Every tool only reads data; nothing is written to Garmin.
-- **Secrets stay secret.** The Garmin API key and admin password are Cloudflare secrets. OAuth tokens, codes
-  and client secrets are stored in KV only as hashes. The cached Garmin access token is AES-GCM encrypted with a
-  key derived from your API key, so a KV dump alone can't use it.
-
-### Revoking access
-
-Remove the app in Gemini, then delete the stored grants and tokens (the server's single user is `owner`):
-
-```powershell
-npx wrangler kv key list --binding OAUTH_KV --remote --prefix "grant:owner:"
-```
-
-```powershell
-foreach ($prefix in "grant:owner:", "token:owner:") { (npx wrangler kv key list --binding OAUTH_KV --remote --prefix $prefix | ConvertFrom-Json) | ForEach-Object { npx wrangler kv key delete --binding OAUTH_KV --remote $_.name } }
-```
-
-Changing `MCP_ADMIN_PASSWORD` stops new approvals with the old password but does **not** disconnect clients
-that are already approved; delete their grants as shown above.
-
-### Rotating the Garmin API key
-
-Garmin keys expire after the period you chose (Garmin emails you about a week before). Create a new key in
-Garmin Connect, then:
-
-```powershell
-npx wrangler secret put GARMIN_PERSONAL_API_KEY
-```
-
-The cached access token is tied to the old key's fingerprint, so the new key is used immediately. No redeploy
-is needed.
+---
 
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| Tool error "Garmin rejected the Personal API key" | The key expired, was deleted or was pasted wrongly. Create a new one and `secret put` it again. |
-| Approval page says "Server not configured" | `MCP_ADMIN_PASSWORD` is missing or shorter than 8 characters. |
-| "Too many attempts" | Wait for the lockout to end (15 minutes per IP, up to 1 hour globally), then start the connection again from Gemini. |
-| "Authorization failed ... expired or was already used" | Start the connection again from Gemini; each approval page works once and for 10 minutes. |
-| Gemini says the server needs re-authorization | The refresh token expired after 30 days without use, or grants were deleted. Reconnect. |
-| `Date range is N days` errors | Sleep and Body Battery allow at most 31 days per call; daily summaries allow up to 366. Split the range. |
-| Deploy error about the KV namespace id | Step 1 wasn't completed: put the real id in `wrangler.jsonc`. |
+| Setup: "register a workers.dev subdomain" | First deploy on a new Cloudflare account. Open [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages**, choose a subdomain, run `npm run setup` again. |
+| Setup: "several Cloudflare accounts" | Choose one when asked, or set `CLOUDFLARE_ACCOUNT_ID`. |
+| Setup: "Garmin rejected this API key" | The key is mistyped, expired or deleted. Copy it again or create a new one. |
+| Setup: "isn't answering yet" | A brand-new workers.dev subdomain can take a few minutes. Open the URL again later. |
+| Gemini says it has no access to Garmin | @-mention the app in the chat (type `@` and pick it). |
+| Tool error: "Garmin rejected the Personal API key" | The key expired. Run `npm run setup -- --update-key`. |
+| Approval page: "Server not configured" | The admin password secret is missing. Run `npm run setup` or `npx wrangler secret put MCP_ADMIN_PASSWORD`. |
+| Approval page: "Too many attempts" | Wait 15 minutes (up to 1 hour), then start the connection again from Gemini. |
+| Approval page: "expired or was already used" | Start the connection again from Gemini; each page works once, for 10 minutes. |
+| Gemini asks to reconnect | The connection wasn't used for 30 days, or grants were deleted. Reconnect and approve again. |
+| "Date range is N days" | Sleep and Body Battery allow 31 days per call, daily summaries 366. Ask for shorter ranges. |
+| "Today" is off by a day | Set `TIMEZONE` in `wrangler.jsonc` to your zone and deploy. |
+| Gemini insists on a client ID and secret | Register a client yourself (below), then paste its `client_id` and `client_secret`. |
+
+Registering a client by hand (replace both placeholders; Gemini shows its redirect URL in the advanced settings):
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "https://garmin-mcp.<your-subdomain>.workers.dev/register" -ContentType "application/json" -Body '{"client_name":"Gemini","redirect_uris":["<GEMINI_REDIRECT_URL>"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"]}'
+```
+
+---
 
 ## Project layout
 
 ```
+scripts/setup.mjs        npm run setup: login, secrets, deploy, checks
 src/
-  index.ts          OAuthProvider setup (DCR, CIMD, scopes, token lifetimes) and the Worker entry point
-  auth-handler.ts   Landing page and the password-protected /authorize consent flow
-  security.ts       Constant-time password check and KV-backed brute-force lockout
-  html.ts           HTML templates and security headers for the auth pages
-  mcp.ts            GarminMCP (McpAgent Durable Object) and the six MCP tools
-  garmin.ts         Garmin Personal API client with encrypted token caching
-  format.ts         Date helpers and response shaping
-wrangler.jsonc      Worker config: Durable Object, KV, vars, required secrets
-worker-configuration.d.ts   Generated by `wrangler types` (Env + runtime types)
+  index.ts               OAuthProvider setup (DCR, CIMD, scopes, token lifetimes), Worker entry point
+  auth-handler.ts        Landing page and the password-protected /authorize consent flow
+  security.ts            Constant-time password check and KV-backed brute-force lockout
+  html.ts                HTML templates and security headers for the auth pages
+  mcp.ts                 GarminMCP (McpAgent Durable Object) and the six MCP tools
+  garmin.ts              Garmin Personal API client with encrypted token caching
+  format.ts              Date helpers and response shaping
+wrangler.jsonc           Worker config: Durable Object, KV (auto-provisioned), vars, required secrets
+worker-configuration.d.ts  Generated by `wrangler types` (Env + runtime types)
+AGENTS.md                Instructions for AI coding agents
 ```
 
 ## Notes
 
+- `wrangler.jsonc` deliberately has no KV namespace `id`. On a first deploy Wrangler creates the namespace
+  (named `<worker-name>-oauth-kv`); later deploys keep the one already bound to the Worker. After an interactive
+  deploy Wrangler may write the new id into `wrangler.jsonc`; keeping or discarding that change both work.
+- Garmin's token endpoint answers `406 Not Acceptable` to `Accept: application/json` alone, so the client sends
+  `Accept: application/json, text/plain, */*`.
 - `agents` 0.34 marks `McpAgent` as feature-frozen in favour of its newer `createMcpHandler` API for MCP SDK v2.
-  `McpAgent` is still fully supported and is what this project uses with `@modelcontextprotocol/sdk` 1.x. That's
-  also why `@modelcontextprotocol/server` and `@modelcontextprotocol/client` (v2) are installed: `agents/mcp`
-  imports them.
+  `McpAgent` is still supported and is used here with `@modelcontextprotocol/sdk` 1.x; `agents/mcp` also imports
+  `@modelcontextprotocol/server` and `@modelcontextprotocol/client` (v2), so they're installed at the exact versions
+  its peer dependencies require.
 - The OAuth resource identifier is derived from the request origin, so the same build works on `workers.dev`, a
   custom domain and `wrangler dev` without config changes.
+- The Garmin Connect Personal API is meant for personal use of your own data. Each person should deploy their own
+  copy with their own key.
