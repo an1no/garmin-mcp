@@ -1,6 +1,11 @@
-# Local development secrets for `npx wrangler dev`.
-# Copy this file to `.dev.vars` (which is git-ignored) and fill in real values.
-# Production secrets are stored on Cloudflare by `npm run setup` instead.
+# The secrets this Worker needs. Values stay empty on purpose: never put a real or sample
+# password here (Cloudflare's "Deploy to Cloudflare" form reads this file).
+#
+# - Local development (`npm run dev`): copy this file to `.dev.vars` (git-ignored) and fill it in.
+# - Deploying: `npm run setup` stores the secrets on Cloudflare for you.
+#
+# GARMIN_PERSONAL_API_KEY: your Garmin Connect Personal API key.
+# MCP_ADMIN_PASSWORD: the password for approving apps; long and random, at least 12 characters.
 
-GARMIN_PERSONAL_API_KEY="paste-your-garmin-personal-api-key-here"
-MCP_ADMIN_PASSWORD="a-long-random-password-at-least-12-chars"
+GARMIN_PERSONAL_API_KEY=
+MCP_ADMIN_PASSWORD=
