@@ -2,6 +2,7 @@
  * Helpers for tools that combine several Garmin requests: one failing request is reported next
  * to the others' results instead of failing the whole tool.
  */
+import { addDays } from "./format";
 import { GarminApiError } from "./garmin";
 
 /** A short, readable reason for a failed Garmin request. */
@@ -50,4 +51,30 @@ export async function fetchParts<K extends string, T>(
 	// Keep the caller's order, whatever order the requests finished in.
 	missing.sort((a, b) => parts.indexOf(a) - parts.indexOf(b));
 	return { results, errors, missing };
+}
+
+/** Splits [startDate, endDate] into consecutive ranges of at most `size` days. */
+export function chunkRange(startDate: string, endDate: string, size: number): { startDate: string; endDate: string }[] {
+	const out: { startDate: string; endDate: string }[] = [];
+	let cursor = startDate;
+	while (cursor <= endDate) {
+		const last = addDays(cursor, size - 1);
+		out.push({ startDate: cursor, endDate: last < endDate ? last : endDate });
+		cursor = addDays(last, 1);
+	}
+	return out;
+}
+
+/** Maps `items` with at most `limit` calls of `fn` running at once, keeping the order. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let next = 0;
+	const worker = async () => {
+		while (next < items.length) {
+			const i = next++;
+			results[i] = await fn(items[i]!);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return results;
 }

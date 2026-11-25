@@ -119,9 +119,9 @@ Garmin emails you about a week before the key expires. See [Renewing the Garmin 
 
 | Tool | What it returns | Range per call |
 | --- | --- | --- |
-| `get_trends` | Weekly or monthly statistics computed on the server. **Sleep:** average hours, stage minutes, score, best/worst night. **Daily:** steps, distance, resting heart rate, stress, Body Battery, intensity minutes. **HRV:** average, range, status counts. **Activities:** count, distance, time, elevation, calories, per type, longest | Up to 1 year in one call |
+| `get_trends` | Weekly or monthly statistics computed on the server. **Sleep:** average hours, stage minutes, score, best/worst night. **Daily:** steps, distance, resting heart rate, stress, Body Battery, intensity minutes. **HRV:** average, range, status counts. **Activities:** count, distance, time, elevation, calories, per type, longest. On request also **VO2 max** and **weight** | Up to 1 year in one call |
 | `get_activities` | Activity list: `activityId`, name, type, event type, start time, location, distance (m), duration (s), elevation gain (m), average/max heart rate, average speed (m/s), calories, power | Up to 100, paged; filter by dates, type, subtype, text, event type (e.g. races), distance, duration, elevation, power, favorites or start area; sort by date, distance, duration or name |
-| `get_activity_details` | One workout: speed, heart rate, power, cadence, elevation, training effect and load, temperature, splits. `raw: true` returns everything | One activity |
+| `get_activity_details` | One workout: speed, heart rate, power, cadence, elevation, training effect and load, temperature, splits. `includeWorkout: true` adds the planned workout it followed, as readable steps and targets (e.g. "1 km at 4:00–4:10 /km", "repeat 4 times"); `raw: true` returns everything | One activity |
 | `get_daily_summary` | Steps, distance, calories, resting/min/max heart rate, stress, Body Battery, intensity minutes, floors, SpO2, respiration, hydration | One day, or up to 1 year |
 | `get_sleep_data` | Total sleep, deep/light/REM/awake time, sleep score and sub-scores, overnight heart rate, stress, SpO2, respiration, sleep need | One night, or up to 31 |
 | `get_hrv_data` | Last-night HRV average and 5-minute high, 7-day average, HRV status, baseline range | Last 7 days by default |
@@ -143,6 +143,8 @@ Example prompts:
 - `@Garmin Connect list all my races`
 - `@Garmin Connect how has my VO2 max changed this year?`
 - `@Garmin Connect what was my heart rate like yesterday afternoon, and how did my HRV look overnight?`
+- `@Garmin Connect did I stick to the planned workout in my last run?`
+- `@Garmin Connect how did my VO2 max and weight change month by month this year?`
 - `@Garmin Connect how much weight have I lost since January, and how far am I from my goal?`
 - `@Garmin Connect what is my Fitness Age and what would improve it most?`
 - `@Garmin Connect what are my heart rate zones for running?`
@@ -212,8 +214,28 @@ Found a security problem? Please report it privately, as described in [SECURITY.
 | Renew the Garmin key | `npm run setup -- --update-key` |
 | Change the admin password | `npx wrangler secret put MCP_ADMIN_PASSWORD` |
 | Change the timezone | By default (`"TIMEZONE": "auto"`) it follows your Garmin profile, re-read once a day. To force one, set `TIMEZONE` in `wrangler.jsonc` (e.g. `Europe/Berlin`), then `npm run deploy` |
-| Watch live logs | `npx wrangler tail` |
+| Watch live logs | `npx wrangler tail`, or the dashboard (see [Logs](#logs)) |
 | Save your changes to GitHub | `git add -A`, `git commit -m "Describe what changed"`, `git push` |
+
+### Logs
+
+The server writes one structured log line per tool call and per decision on the approval page, so you can see
+what happened without guessing:
+
+| Event | Fields |
+| --- | --- |
+| `tool_call` | `tool`, `ok`, `durationMs`; on failure `errorKind` (`garmin`, `invalid_input`, `timeout`, `unexpected`) and `garminStatus` (e.g. 429); `partialErrors` when one part of a combined result failed (e.g. one `get_trends` metric) |
+| `authorize` | `outcome`: `approved` (with `scope`), `denied`, `wrong_password` or `locked_out` (with `retryAfterSeconds`) |
+
+Arguments, dates, activity IDs, returned data, the password, tokens and IP addresses are never logged.
+
+To read them: [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → your Worker →
+**Observability**, then filter, for example `event = tool_call` and `ok = false`. Or watch live with
+`npx wrangler tail`. On the free plan Cloudflare keeps them for a few days.
+
+If Gemini shows an error for a tool call and there is **no** `tool_call` line for it, the request never reached
+the tool (for example a connection problem between Gemini and the server, or arguments the tool's schema
+rejected).
 
 ### Renewing the Garmin key
 
@@ -393,6 +415,7 @@ src/
   tools.ts               The twelve MCP tools: schemas, descriptions, argument handling, error messages
   trends.ts              get_trends: chunked fetching and weekly/monthly aggregation
   fitness.ts             get_vo2max, get_weight, get_fitness_profile: fetching and shaping
+  workouts.ts            Planned workout of an activity, decoded into readable steps and targets
   nutrition.ts           get_nutrition: one day in detail, or daily totals for up to 14 days
   parts.ts               Runs several Garmin requests; one failing part is reported, not fatal
   intraday.ts            get_day_details: heart rate, overnight HRV and SpO2 per interval, in local time

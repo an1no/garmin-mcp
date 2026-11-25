@@ -108,7 +108,8 @@ remains.
   (password check, lockout), `src/mcp.ts` (Durable Object: Garmin client, timezone), `src/tools.ts` (the MCP
   tools: schemas, argument handling, errors), `src/trends.ts` (`get_trends` fetching and aggregation),
   `src/fitness.ts` (`get_vo2max`, `get_weight`, `get_fitness_profile`), `src/nutrition.ts` (`get_nutrition`),
-  `src/intraday.ts` (`get_day_details`), `src/parts.ts` (parallel requests with per-part errors), `src/profile.ts`
+  `src/intraday.ts` (`get_day_details`), `src/workouts.ts` (planned workouts for `get_activity_details`),
+  `src/parts.ts` (parallel requests with per-part errors, chunking), `src/profile.ts`
   (timezone: `TIMEZONE` or the Garmin profile's),
   `src/garmin.ts` (Garmin API client, token cache),
   `src/format.ts` (response shaping), `scripts/setup.mjs` (setup).
@@ -123,4 +124,6 @@ remains.
 - After adding or upgrading dependencies, if the lockfile check fails, regenerate the lockfile from scratch
   (`rm -rf node_modules package-lock.json && npm install`) rather than editing it.
 - Test fixtures are synthetic. Never paste real Garmin responses (they contain health data) into tests.
+- Logging: only `logToolCall` (src/tools.ts) and `logAuthorize` (src/auth-handler.ts) write logs. Never log tool
+  arguments, dates, IDs, returned data, passwords, tokens or IP addresses; the tests check this.
 - Commit with git as usual; never add the secret files.

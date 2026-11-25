@@ -3,16 +3,20 @@ import { GarminApiError } from "../src/garmin";
 import { summarizeActivity, summarizeDailySummaryV2, summarizeHrv, summarizeSleep } from "../src/format";
 import {
 	aggregateActivities,
+	aggregateVo2Max,
+	aggregateWeight,
+	MAX_GARMIN_REQUESTS,
+	plannedRequests,
 	aggregateDaily,
 	aggregateHrv,
 	aggregateSleep,
 	buildTrends,
-	chunkRange,
 	collectTrends,
-	mapLimit,
 	periodKey,
 	periodsInRange,
 } from "../src/trends";
+import { chunkRange, mapLimit } from "../src/parts";
+import { vo2DailyRecords } from "../src/fitness";
 import { fakeGarmin, spanDays } from "./helpers";
 
 // Synthetic Garmin payloads, shaped like the Personal API Swagger schemas.
@@ -289,5 +293,87 @@ describe("collectTrends", () => {
 		})) as Record<string, any>;
 		expect(g.calls[0]!.query.activityType).toBe("running");
 		expect(t.notes[0]).toMatch(/running/);
+	});
+});
+
+describe("VO2 max and weight in trends", () => {
+	const maxmetRow = (date: string, generic?: number, cycling?: number) => ({
+		generic: generic === undefined ? null : { calendarDate: date, vo2MaxPreciseValue: generic, vo2MaxValue: Math.round(generic) },
+		cycling: cycling === undefined ? null : { calendarDate: date, vo2MaxPreciseValue: cycling, vo2MaxValue: Math.round(cycling) },
+	});
+
+	it("vo2DailyRecords: one record per date with each sport's precise value", () => {
+		expect(vo2DailyRecords([maxmetRow("2026-03-02", 48.44), maxmetRow("2026-03-01", 48.1, 52.06), {}, null])).toEqual([
+			{ calendarDate: "2026-03-01", generic: 48.1, cycling: 52.1 },
+			{ calendarDate: "2026-03-02", generic: 48.4 },
+		]);
+	});
+
+	it("aggregateVo2Max: per sport latest/average/min/max/change, in date order", () => {
+		expect(
+			aggregateVo2Max([
+				{ calendarDate: "2026-03-03", generic: 49 },
+				{ calendarDate: "2026-03-01", generic: 48, cycling: 52 },
+				{ calendarDate: "2026-03-02", generic: 48.5 },
+			]),
+		).toEqual({
+			generic: { latest: 49, average: 48.5, min: 48, max: 49, change: 1, days: 3 },
+			cycling: { latest: 52, average: 52, min: 52, max: 52, change: 0, days: 1 },
+		});
+		expect(aggregateVo2Max([])).toBeUndefined();
+	});
+
+	it("aggregateWeight: measurements, average, range, first/latest, change, body fat", () => {
+		expect(
+			aggregateWeight([
+				{ date: "2026-03-05", weightKg: 71.5, bodyFatPercent: 18 },
+				{ date: "2026-03-01", weightKg: 73, bodyFatPercent: 19 },
+				{ date: "2026-03-03", weightKg: 72 },
+				{ date: "2026-03-04" },
+			]),
+		).toEqual({
+			measurements: 3,
+			averageKg: 72.2,
+			minKg: 71.5,
+			maxKg: 73,
+			firstKg: 73,
+			latestKg: 71.5,
+			changeKg: -1.5,
+			averageBodyFatPercent: 18.5,
+		});
+		expect(aggregateWeight([{ date: "2026-03-01" }])).toBeUndefined();
+	});
+
+	it("collectTrends fetches VO2 max in 28-day and weight in 364-day chunks, groups them by month", async () => {
+		const g = fakeGarmin((path) => {
+			const [from] = path.split("/").slice(-2);
+			if (path.startsWith("/metrics-service/metrics/maxmet/daily/")) return [maxmetRow(from!, 48)];
+			if (path.startsWith("/weight-service/weight/all/")) return [{ calendarDate: from, weight: 72000 }, { calendarDate: "2026-06-15", weight: 71.2 }];
+			throw new Error(`unexpected ${path}`);
+		});
+		const t = (await collectTrends(g.client, {
+			startDate: "2026-01-01",
+			endDate: "2026-12-31",
+			period: "month",
+			metrics: ["vo2max", "weight"],
+		})) as Record<string, any>;
+		const vo2Calls = g.calls.filter((c) => c.path.includes("/maxmet/"));
+		const weightCalls = g.calls.filter((c) => c.path.includes("/weight/all/"));
+		expect(vo2Calls).toHaveLength(14);
+		for (const c of vo2Calls) expect(spanDays(c.path.split("/").at(-2)!, c.path.split("/").at(-1)!)).toBeLessThanOrEqual(28);
+		expect(weightCalls).toHaveLength(2);
+		expect(weightCalls.map((c) => c.path.split("/").slice(-2).join("/"))).toEqual(["2026-01-01/2026-12-30", "2026-12-31/2026-12-31"]);
+		expect(t.overall.vo2max.generic).toMatchObject({ latest: 48, days: 14 });
+		expect(t.overall.weight).toMatchObject({ firstKg: 72, minKg: 71.2 });
+		expect(t.periods.find((p: { period: string }) => p.period === "2026-06").weight).toMatchObject({ measurements: 2 });
+		expect(t.units).toMatchObject({ vo2max: "ml/kg/min", weight: "kg" });
+	});
+
+	it("the largest allowed request stays within the Garmin request budget", () => {
+		const year = { startDate: "2024-01-01", endDate: "2024-12-31" }; // 366 days, a leap year
+		const all = ["sleep", "daily", "hrv", "activities", "vo2max", "weight"] as const;
+		expect(plannedRequests(year, all)).toBe(12 + 2 + 2 + 10 + 14 + 2);
+		expect(plannedRequests(year, all)).toBeLessThanOrEqual(MAX_GARMIN_REQUESTS);
+		expect(plannedRequests(year, ["sleep"])).toBe(12);
 	});
 });

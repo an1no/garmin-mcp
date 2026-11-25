@@ -23,9 +23,11 @@ import {
 import { GarminApiError, type GarminClient } from "./garmin";
 import { DAY_DETAIL_PARTS, fetchDayDetails } from "./intraday";
 import { fetchNutrition, NUTRITION_MAX_DAYS } from "./nutrition";
-import { collectTrends, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
+import { describeError } from "./parts";
+import { collectTrends, DEFAULT_TREND_METRICS, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
+import { fetchActivityWorkouts } from "./workouts";
 
-export const SERVER_INFO = { name: "garmin-connect", version: "1.4.0" } as const;
+export const SERVER_INFO = { name: "garmin-connect", version: "1.5.0" } as const;
 
 export const SERVER_INSTRUCTIONS =
 	"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery, " +
@@ -132,7 +134,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "List Garmin activities", ...READ_ONLY },
 		},
 		async ({ start, limit, startDate, endDate, activityType, activitySubType, search, area, favoritesOnly, ...filters }) =>
-			run(async () => {
+			run("get_activities", async () => {
 				if (startDate) assertDate(startDate, "startDate");
 				if (endDate) assertDate(endDate, "endDate");
 				assertMinMax(filters.minDistance, filters.maxDistance, "Distance");
@@ -173,20 +175,41 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			description:
 				"Detailed metrics for one activity (workout/ride/run): distance, moving/elapsed time, speed, heart rate, power, " +
 				"cadence, elevation, training effect & load, temperature, plus split/lap summaries. " +
-				"Set raw=true for the complete unfiltered Garmin payload.",
+				"Set includeWorkout=true to also get the planned (structured) workout the activity followed, with readable " +
+				"steps and targets, to compare plan and execution. Set raw=true for the complete unfiltered Garmin payload.",
 			inputSchema: {
 				activityId: z
 					.union([z.number().int().positive(), z.string().regex(/^\d+$/, "Numeric activityId")])
 					.describe("The activityId returned by get_activities."),
 				raw: z.boolean().default(false).describe("Return the full Garmin payload instead of the curated summary."),
+				includeWorkout: z
+					.boolean()
+					.default(false)
+					.describe("Also return the planned workout (steps, durations, targets) this activity followed, if any."),
 			},
 			annotations: { title: "Get Garmin activity details", ...READ_ONLY },
 		},
-		async ({ activityId, raw }) =>
-			run(async () => {
+		async ({ activityId, raw, includeWorkout }) =>
+			run("get_activity_details", async () => {
 				const id = String(activityId);
-				const result = await ctx.garmin().get(`/activity-service/activity/${encodeURIComponent(id)}`);
-				return shapeActivityDetails(result, raw);
+				const garmin = ctx.garmin();
+				if (!includeWorkout) {
+					return shapeActivityDetails(await garmin.get(`/activity-service/activity/${encodeURIComponent(id)}`), raw);
+				}
+				await garmin.getAccessToken(); // one token request for the two parallel calls
+				const [details, workouts] = await Promise.all([
+					garmin.get(`/activity-service/activity/${encodeURIComponent(id)}`),
+					// The workout is extra: if only that request fails, the details still come back.
+					fetchActivityWorkouts(garmin, id).catch((error: unknown) => ({ error: describeError(error) })),
+				]);
+				const shaped = shapeActivityDetails(details, raw);
+				if (Array.isArray(workouts)) {
+					if (workouts.length) shaped.plannedWorkouts = workouts;
+					else shaped.plannedWorkout = "This activity didn't follow a planned workout.";
+				} else {
+					shaped.plannedWorkoutError = workouts.error;
+				}
+				return shaped;
 			}),
 	);
 
@@ -207,7 +230,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin daily health summary", ...READ_ONLY },
 		},
 		async ({ date: day, startDate, endDate }) =>
-			run(async () => {
+			run("get_daily_summary", async () => {
 				if (startDate || endDate) {
 					const range = resolveRange(startDate, endDate, { today: await today(ctx), defaultDays: 1, maxDays: 366 });
 					const result = await ctx.garmin().get<{ data?: unknown[] }>("/usersummary-service/v2/dailysummaries", range);
@@ -238,7 +261,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin sleep data", ...READ_ONLY },
 		},
 		async ({ date: day, startDate, endDate }) =>
-			run(async () => {
+			run("get_sleep_data", async () => {
 				if (startDate || endDate) {
 					const range = resolveRange(startDate, endDate, { today: await today(ctx), defaultDays: 1, maxDays: 31 });
 					const result = await ctx.garmin().get<unknown[]>("/sleep-service/sleep/dailySleepSummariesByDate", range);
@@ -267,7 +290,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin HRV status", ...READ_ONLY },
 		},
 		async ({ startDate, endDate }) =>
-			run(async () => {
+			run("get_hrv_data", async () => {
 				const todayDate = await today(ctx);
 				const end = endDate ?? todayDate;
 				const range = resolveRange(startDate ?? addDays(end, -6), end, { today: todayDate, defaultDays: 7, maxDays: 366 });
@@ -306,7 +329,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin Body Battery", ...READ_ONLY },
 		},
 		async ({ startDate, endDate, includeTimeline, chunks }) =>
-			run(async () => {
+			run("get_body_battery", async () => {
 				const range = resolveRange(startDate, endDate, { today: await today(ctx), defaultDays: 1, maxDays: 31 });
 				const result = await ctx.garmin().get<unknown[]>("/wellness-service/wellness/bodyBattery/reports/daily", {
 					...range,
@@ -346,7 +369,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin day details", ...READ_ONLY },
 		},
 		async ({ date: day, include, intervalMinutes }) =>
-			run(async () => {
+			run("get_day_details", async () => {
 				const calendarDate = day ?? (await today(ctx));
 				assertDate(calendarDate, "date");
 				return fetchDayDetails(ctx.garmin(), {
@@ -374,7 +397,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin Fitness Age and heart rate zones", ...READ_ONLY },
 		},
 		async ({ date: day }) =>
-			run(async () => {
+			run("get_fitness_profile", async () => {
 				const calendarDate = day ?? (await today(ctx));
 				assertDate(calendarDate, "date");
 				return fetchFitnessProfile(ctx.garmin(), calendarDate);
@@ -399,7 +422,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin nutrition log", ...READ_ONLY },
 		},
 		async ({ date: day, startDate, endDate }) =>
-			run(async () => {
+			run("get_nutrition", async () => {
 				if (startDate || endDate) {
 					const range = resolveRange(startDate, endDate, {
 						today: await today(ctx),
@@ -430,7 +453,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin VO2 max", ...READ_ONLY },
 		},
 		async ({ startDate, endDate }) =>
-			run(async () => {
+			run("get_vo2max", async () => {
 				const range = await rangeEndingToday(ctx, startDate, endDate, 365);
 				return fetchVo2Max(ctx.garmin(), range);
 			}),
@@ -453,7 +476,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin weight and body composition", ...READ_ONLY },
 		},
 		async ({ startDate, endDate }) =>
-			run(async () => {
+			run("get_weight", async () => {
 				const range = await rangeEndingToday(ctx, startDate, endDate, 90);
 				return fetchWeight(ctx.garmin(), range);
 			}),
@@ -469,7 +492,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 				"hours and stage minutes, sleep score (avg/min/max), best and worst night. Daily: steps (total/avg/best day), " +
 				"distance, resting heart rate (avg/min/max), stress, Body Battery, intensity minutes. HRV: average/min/max, " +
 				"latest status, status counts. Activities: count, distance, time, elevation and calories, per type, plus the " +
-				"longest. Each period row and an `overall` block cover the whole range. Use this for trends, averages, totals " +
+				"longest. On request also VO2 max (latest/average/range/change per sport) and weight (average/range/change, " +
+				"body fat). Each period row and an `overall` block cover the whole range. Use this for trends, averages, totals " +
 				"and comparisons (e.g. 'how did my sleep change this year?', 'how far did I run in 2025?', 'compare March " +
 				"and April') instead of fetching day-by-day data.",
 			inputSchema: {
@@ -482,7 +506,10 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 				metrics: z
 					.array(z.enum(TREND_METRICS))
 					.min(1)
-					.describe("Which data to include: sleep, daily, hrv, activities. Defaults to all four.")
+					.describe(
+						"Which data to include: sleep, daily, hrv, activities, vo2max, weight. Defaults to sleep, daily, hrv and " +
+							"activities; add vo2max or weight when the question is about fitness or body weight over time.",
+					)
 					.optional(),
 				activityType: z
 					.string()
@@ -494,7 +521,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 			annotations: { title: "Get Garmin trends", ...READ_ONLY },
 		},
 		async ({ startDate, endDate, period, metrics, activityType }) =>
-			run(async () => {
+			run("get_trends", async () => {
 				const todayDate = await today(ctx);
 				const end = endDate ?? todayDate;
 				if (endDate) assertDate(endDate, "endDate");
@@ -507,7 +534,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 				return collectTrends(ctx.garmin(), {
 					...range,
 					period: period ?? (days <= 92 ? "week" : "month"),
-					metrics: [...new Set(metrics ?? TREND_METRICS)],
+					metrics: [...new Set(metrics ?? DEFAULT_TREND_METRICS)],
 					activityType,
 				});
 			}),
@@ -521,21 +548,67 @@ function assertMinMax(min: number | undefined, max: number | undefined, name: st
 	}
 }
 
-/** Runs a tool body and converts its result (or error) into an MCP tool result. */
-async function run(body: () => Promise<unknown>): Promise<CallToolResult> {
+/**
+ * One structured log line per tool call, for Cloudflare's Workers Logs (filter on event = "tool_call").
+ * Only the tool name, timing and outcome: never arguments, dates or any of the returned data.
+ */
+export function logToolCall(entry: {
+	tool: string;
+	ok: boolean;
+	durationMs: number;
+	errorKind?: "garmin" | "invalid_input" | "timeout" | "unexpected";
+	garminStatus?: number;
+	partialErrors?: string[];
+}): void {
+	// Logged as an object so Workers Logs indexes each field.
+	console.log({ event: "tool_call", ...stripUndefined(entry) });
+}
+
+function stripUndefined<T extends object>(value: T): Partial<T> {
+	return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+/** Names of the parts that failed inside an otherwise successful result (e.g. one get_trends metric). */
+function partialErrors(data: unknown): string[] | undefined {
+	if (!data || typeof data !== "object") return undefined;
+	const names: string[] = [];
+	const errors = (data as { errors?: unknown }).errors;
+	if (errors && typeof errors === "object") names.push(...Object.keys(errors));
+	if ("plannedWorkoutError" in data) names.push("plannedWorkout");
+	return names.length ? names : undefined;
+}
+
+/** Runs a tool body, converts its result (or error) into an MCP tool result and logs the outcome. */
+async function run(tool: string, body: () => Promise<unknown>): Promise<CallToolResult> {
+	const started = Date.now();
 	try {
 		const data = await body();
+		logToolCall({ tool, ok: true, durationMs: Date.now() - started, partialErrors: partialErrors(data) });
 		return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 	} catch (error) {
 		let message: string;
-		if (error instanceof GarminApiError || error instanceof RangeError) {
+		let errorKind: "garmin" | "invalid_input" | "timeout" | "unexpected";
+		if (error instanceof GarminApiError) {
 			message = error.message;
+			errorKind = "garmin";
+		} else if (error instanceof RangeError) {
+			message = error.message;
+			errorKind = "invalid_input";
 		} else if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
 			message = "Garmin did not respond in time. Please try again.";
+			errorKind = "timeout";
 		} else {
 			console.error("Unexpected tool error", error);
 			message = `Unexpected error: ${error instanceof Error ? error.message : String(error)}`;
+			errorKind = "unexpected";
 		}
+		logToolCall({
+			tool,
+			ok: false,
+			durationMs: Date.now() - started,
+			errorKind,
+			garminStatus: error instanceof GarminApiError ? error.status : undefined,
+		});
 		return { isError: true, content: [{ type: "text", text: message }] };
 	}
 }

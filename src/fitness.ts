@@ -6,8 +6,7 @@
  */
 import type { GarminClient } from "./garmin";
 import { compact, num, round } from "./format";
-import { fetchParts } from "./parts";
-import { chunkRange, mapLimit } from "./trends";
+import { chunkRange, fetchParts, mapLimit } from "./parts";
 
 type Json = Record<string, unknown>;
 type Range = { startDate: string; endDate: string };
@@ -66,6 +65,23 @@ export function summarizeVo2Max(rows: unknown[]): Json {
 		};
 	}
 	return out;
+}
+
+/** maxmet rows -> one record per date with the precise value per sport (used by get_trends). */
+export function vo2DailyRecords(rows: unknown[]): Json[] {
+	const byDate = new Map<string, Json>();
+	for (const row of rows) {
+		for (const sport of VO2_SPORTS) {
+			const r = obj(obj(row)[sport]);
+			const precise = num(r.vo2MaxPreciseValue) ?? num(r.vo2MaxValue);
+			if (typeof r.calendarDate !== "string" || precise === undefined || precise <= 0) continue;
+			const date = r.calendarDate.slice(0, 10);
+			const record = byDate.get(date) ?? { calendarDate: date };
+			record[sport] = round(precise, 1);
+			byDate.set(date, record);
+		}
+	}
+	return [...byDate.values()].sort((a, b) => String(a.calendarDate).localeCompare(String(b.calendarDate)));
 }
 
 export async function fetchVo2Max(garmin: GarminClient, range: Range): Promise<Json> {

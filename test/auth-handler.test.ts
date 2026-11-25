@@ -226,3 +226,31 @@ describe("OAuth errors", () => {
 		await expect(call(env, new Request(AUTHORIZE))).rejects.toThrow("boom");
 	});
 });
+
+describe("logging", () => {
+	const authLogs = (spy: { mock: { calls: unknown[][] } }) =>
+		spy.mock.calls.map((args) => args[0] as Record<string, unknown>).filter((e) => e?.event === "authorize");
+
+	it("logs each decision without the password or IP address", async () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const { env } = makeEnv();
+		await call(env, post({ handle: "h", decision: "approve", password: "wrong-guess-123" }));
+		await call(env, post({ handle: "h", decision: "deny", password: "" }));
+		await call(env, post({ handle: "h", decision: "approve", password: PASSWORD }));
+		expect(authLogs(spy)).toEqual([
+			{ event: "authorize", outcome: "wrong_password" },
+			{ event: "authorize", outcome: "denied" },
+			{ event: "authorize", outcome: "approved", scope: ["garmin:read"] },
+		]);
+		const everything = JSON.stringify(spy.mock.calls);
+		for (const secret of [PASSWORD, "wrong-guess-123", "198.51.100.1"]) expect(everything).not.toContain(secret);
+	});
+
+	it("logs a lockout with the wait", async () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const { env } = makeEnv();
+		for (let i = 0; i < 6; i++) await call(env, post({ handle: "h", decision: "approve", password: `wrong-${i}` }));
+		expect(authLogs(spy).at(-1)).toMatchObject({ event: "authorize", outcome: "locked_out" });
+		expect(authLogs(spy).at(-1)!.retryAfterSeconds).toBeGreaterThan(0);
+	});
+});

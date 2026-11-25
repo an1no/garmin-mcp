@@ -238,6 +238,55 @@ describe("single-resource tools", () => {
 	});
 });
 
+describe("get_activity_details with the planned workout", () => {
+	const details = { activityId: 9, summaryDTO: { distance: 5000 } };
+	const workout = { workoutName: "Tempo", sport: "RUNNING", steps: [{ stepIndex: 0, durationType: "TIME", durationValue: 600 }] };
+
+	it("adds plannedWorkouts only when asked, fetching both in parallel", async () => {
+		const { call, garmin } = await connect((path) => (path.endsWith("/workouts") ? [workout] : details));
+		expect((await call("get_activity_details", { activityId: 9 })).json()).not.toHaveProperty("plannedWorkouts");
+		expect(garmin.calls).toHaveLength(1);
+		const r = (await call("get_activity_details", { activityId: 9, includeWorkout: true })).json();
+		expect(r.plannedWorkouts).toEqual([{ name: "Tempo", sport: "RUNNING", steps: [{ step: 0, ends: "10:00" }] }]);
+		expect(garmin.calls.map((c) => c.path).slice(1).sort()).toEqual(["/activity-service/activity/9", "/activity-service/activity/9/workouts"]);
+	});
+
+	it("says so when no workout was followed (404)", async () => {
+		const { call } = await connect((path) => {
+			if (path.endsWith("/workouts")) throw new GarminApiError("Not found", 404, path);
+			return details;
+		});
+		const r = (await call("get_activity_details", { activityId: 9, includeWorkout: true })).json();
+		expect(r.plannedWorkout).toMatch(/didn.t follow a planned workout/);
+		expect(r.summary).toMatchObject({ distance: 5000 });
+	});
+
+	it("still returns the details when only the workout request fails", async () => {
+		const { call } = await connect((path) => {
+			if (path.endsWith("/workouts")) throw new GarminApiError("Rate limited by Garmin - wait a bit and try again.", 429, path);
+			return details;
+		});
+		const result = await call("get_activity_details", { activityId: 9, includeWorkout: true });
+		expect(result.isError).toBe(false);
+		expect(result.json().plannedWorkoutError).toMatch(/Rate limited/);
+	});
+});
+
+describe("get_trends metrics", () => {
+	it("VO2 max and weight only when asked for", async () => {
+		freezeDate("2026-11-25T08:00:00Z");
+		const { call, garmin } = await connect((path) => (path.startsWith("/usersummary") ? { data: [] } : path.startsWith("/hrv") ? {} : []));
+		await call("get_trends");
+		expect(garmin.calls.some((c) => c.path.includes("/maxmet/") || c.path.includes("/weight/"))).toBe(false);
+		garmin.calls.length = 0;
+		const r = (await call("get_trends", { metrics: ["vo2max", "weight"] })).json();
+		expect(garmin.calls.some((c) => c.path.includes("/maxmet/"))).toBe(true);
+		expect(garmin.calls.some((c) => c.path.includes("/weight-service/weight/all/"))).toBe(true);
+		expect(garmin.calls.some((c) => c.path.startsWith("/sleep-service"))).toBe(false);
+		expect(r.units).toMatchObject({ vo2max: "ml/kg/min" });
+	});
+});
+
 describe("fitness profile and nutrition", () => {
 	it("get_fitness_profile: today in the user's zone, both parts", async () => {
 		freezeDate("2026-11-25T21:30:00Z");
@@ -311,5 +360,61 @@ describe("errors reach the model as readable tool errors", () => {
 		expect(result.isError).toBe(true);
 		expect(result.text).toMatch(message);
 		spy.mockRestore();
+	});
+});
+
+describe("logging", () => {
+	const ALLOWED_KEYS = ["event", "tool", "ok", "durationMs", "errorKind", "garminStatus", "partialErrors"];
+	const toolLogs = (spy: { mock: { calls: unknown[][] } }) =>
+		spy.mock.calls.map((args) => args[0] as Record<string, unknown>).filter((e) => e?.event === "tool_call");
+
+	it("one line per call: tool, outcome and duration only, never arguments or data", async () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const { call } = await connect(() => ({ activityId: 24681281056, activityName: "Secret Morning Run", summaryDTO: { distance: 5075 } }));
+		await call("get_activity_details", { activityId: 24681281056 });
+		const logs = toolLogs(spy);
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toMatchObject({ event: "tool_call", tool: "get_activity_details", ok: true });
+		expect(typeof logs[0]!.durationMs).toBe("number");
+		for (const key of Object.keys(logs[0]!)) expect(ALLOWED_KEYS).toContain(key);
+		const everything = JSON.stringify(spy.mock.calls);
+		for (const secret of ["24681281056", "Secret Morning Run", "5075"]) expect(everything).not.toContain(secret);
+	});
+
+	it.each([
+		[new GarminApiError("Garmin API 429 ...", 429, "/x"), { errorKind: "garmin", garminStatus: 429 }],
+		[new RangeError("startDate must be a valid date"), { errorKind: "invalid_input" }],
+		[Object.assign(new Error("timed out"), { name: "TimeoutError" }), { errorKind: "timeout" }],
+		[new Error("boom"), { errorKind: "unexpected" }],
+	])("failures are logged with their kind (%s)", async (error, expected) => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { call } = await connect(() => {
+			throw error;
+		});
+		await call("get_activity_details", { activityId: 1 });
+		expect(toolLogs(spy)).toEqual([expect.objectContaining({ tool: "get_activity_details", ok: false, ...expected })]);
+	});
+
+	it("partial failures inside a successful result are named", async () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const { call } = await connect((path) => {
+			if (path.endsWith("/workouts") || path.startsWith("/hrv-service")) throw new GarminApiError("Rate limited", 429, path);
+			if (path.startsWith("/sleep-service")) return [];
+			return { activityId: 1 };
+		});
+		await call("get_activity_details", { activityId: 1, includeWorkout: true });
+		await call("get_trends", { startDate: "2026-11-01", endDate: "2026-11-07", metrics: ["sleep", "hrv"] });
+		expect(toolLogs(spy)).toEqual([
+			expect.objectContaining({ tool: "get_activity_details", ok: true, partialErrors: ["plannedWorkout"] }),
+			expect.objectContaining({ tool: "get_trends", ok: true, partialErrors: ["hrv"] }),
+		]);
+	});
+
+	it("calls rejected by the schema never reach the tool, so they aren't logged as tool calls", async () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const { call } = await connect();
+		await call("get_activities", { limit: 1000 });
+		expect(toolLogs(spy)).toEqual([]);
 	});
 });

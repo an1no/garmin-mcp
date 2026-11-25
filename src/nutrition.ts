@@ -4,7 +4,7 @@
  */
 import { GarminApiError, type GarminClient } from "./garmin";
 import { addDays, compact, daysInclusive, num, round } from "./format";
-import { mapLimit } from "./trends";
+import { mapLimit } from "./parts";
 
 type Json = Record<string, unknown>;
 

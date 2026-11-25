@@ -77,12 +77,14 @@ async function submitConsent(request: Request, env: AuthEnv): Promise<Response> 
 
 	if (decision === "deny") {
 		const denied = await oauth.denyConsent(request, handle);
+		logAuthorize("denied");
 		return new Response(null, { status: 302, headers: denied.headers });
 	}
 
 	const ip = clientIp(request);
 	const wait = await lockoutSeconds(env.OAUTH_KV, ip);
 	if (wait > 0) {
+		logAuthorize("locked_out", { retryAfterSeconds: wait });
 		return new Response(
 			messagePage(
 				"Too many attempts",
@@ -94,6 +96,7 @@ async function submitConsent(request: Request, env: AuthEnv): Promise<Response> 
 
 	if (!(await verifyPassword(password, env.MCP_ADMIN_PASSWORD))) {
 		await recordFailure(env.OAUTH_KV, ip);
+		logAuthorize("wrong_password");
 		// The handle has not been consumed, so the same page can be shown again.
 		// The authorization request is re-read from this POST's URL (the form posts back to it).
 		const authRequest = await oauth.parseAuthRequest(request);
@@ -121,9 +124,18 @@ async function submitConsent(request: Request, env: AuthEnv): Promise<Response> 
 		props,
 	});
 
+	logAuthorize("approved", { scope: approved.request.scope });
 	const headers = new Headers(approved.headers);
 	headers.set("Location", redirectTo);
 	return new Response(null, { status: 302, headers });
+}
+
+/**
+ * One structured log line per approval-page decision, for Workers Logs (filter on event = "authorize").
+ * No password, IP address or client details are logged.
+ */
+function logAuthorize(outcome: "approved" | "denied" | "wrong_password" | "locked_out", extra: Record<string, unknown> = {}): void {
+	console.log({ event: "authorize", outcome, ...extra });
 }
 
 function notConfigured(): Response {

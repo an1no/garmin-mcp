@@ -7,7 +7,8 @@
  * one definition of every field with the day-by-day tools.
  */
 import type { GarminClient } from "./garmin";
-import { describeError } from "./parts";
+import { shapeWeight, VO2_SPORTS, vo2DailyRecords } from "./fitness";
+import { chunkRange, describeError, mapLimit } from "./parts";
 import {
 	addDays,
 	compact,
@@ -20,8 +21,10 @@ import {
 
 type Json = Record<string, unknown>;
 
-export const TREND_METRICS = ["sleep", "daily", "hrv", "activities"] as const;
+export const TREND_METRICS = ["sleep", "daily", "hrv", "activities", "vo2max", "weight"] as const;
 export type TrendMetric = (typeof TREND_METRICS)[number];
+/** Metrics included when the caller doesn't choose (VO2 max and weight are opt-in). */
+export const DEFAULT_TREND_METRICS: readonly TrendMetric[] = ["sleep", "daily", "hrv", "activities"];
 export type TrendPeriod = "week" | "month";
 
 /** Longest range get_trends accepts. */
@@ -33,6 +36,15 @@ const DAILY_CHUNK_DAYS = 183;
 const HRV_CHUNK_DAYS = 183;
 const ACTIVITY_PAGE_SIZE = 100;
 const ACTIVITY_MAX_PAGES = 10;
+/** maxmet has no documented range limit: use the smallest any Personal API endpoint documents. */
+const VO2_CHUNK_DAYS = 28;
+/** /weight-service/weight/all allows up to 364 days per request. */
+const WEIGHT_CHUNK_DAYS = 364;
+/**
+ * Most Garmin requests one get_trends call may make. Workers on the free plan allow 50 outgoing
+ * requests per invocation; the rest of the headroom is for the token and timezone lookups.
+ */
+export const MAX_GARMIN_REQUESTS = 45;
 /** Parallel Garmin requests per metric; Workers allows 6 open connections per request. */
 const CONCURRENCY = 3;
 
@@ -67,18 +79,6 @@ export function periodsInRange(
 		const last = addDays(next, -1);
 		out.push({ period: key, from: cursor, to: last < endDate ? last : endDate });
 		cursor = next;
-	}
-	return out;
-}
-
-/** Splits [startDate, endDate] into consecutive ranges of at most `size` days. */
-export function chunkRange(startDate: string, endDate: string, size: number): { startDate: string; endDate: string }[] {
-	const out: { startDate: string; endDate: string }[] = [];
-	let cursor = startDate;
-	while (cursor <= endDate) {
-		const last = addDays(cursor, size - 1);
-		out.push({ startDate: cursor, endDate: last < endDate ? last : endDate });
-		cursor = addDays(last, 1);
 	}
 	return out;
 }
@@ -254,16 +254,56 @@ export function aggregateActivities(records: Json[]): Json | undefined {
 	});
 }
 
+/** Daily VO2 max records ({ calendarDate, generic?, cycling?, rowing? }) -> per sport: latest, average, range, change. */
+export function aggregateVo2Max(records: Json[]): Json | undefined {
+	const sorted = [...records].sort((a, b) => String(a.calendarDate).localeCompare(String(b.calendarDate)));
+	const out: Json = {};
+	for (const sport of VO2_SPORTS) {
+		const values = numbers(sorted.map((r) => r[sport]), positive);
+		if (!values.length) continue;
+		out[sport] = {
+			latest: values[values.length - 1],
+			average: avg(values, 1),
+			min: min(values),
+			max: max(values),
+			change: round(values[values.length - 1]! - values[0]!, 1),
+			days: values.length,
+		};
+	}
+	return Object.keys(out).length ? out : undefined;
+}
+
+/** Weight entries (from shapeWeight) -> measurements, average, range, first/latest, change, body fat. */
+export function aggregateWeight(records: Json[]): Json | undefined {
+	const entries = records
+		.filter((r) => typeof r.weightKg === "number")
+		.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+	if (!entries.length) return undefined;
+	const weights = entries.map((e) => e.weightKg as number);
+	return compact({
+		measurements: entries.length,
+		averageKg: avg(weights, 1),
+		minKg: min(weights),
+		maxKg: max(weights),
+		firstKg: weights[0],
+		latestKg: weights[weights.length - 1],
+		changeKg: round(weights[weights.length - 1]! - weights[0]!, 1),
+		averageBodyFatPercent: avg(numbers(entries.map((e) => e.bodyFatPercent), positive), 1),
+	});
+}
+
 const AGGREGATORS: Record<TrendMetric, (records: Json[]) => Json | undefined> = {
 	sleep: aggregateSleep,
 	daily: aggregateDaily,
 	hrv: aggregateHrv,
 	activities: aggregateActivities,
+	vo2max: aggregateVo2Max,
+	weight: aggregateWeight,
 };
 
 /** Calendar date (YYYY-MM-DD) a shaped record belongs to. */
 function recordDate(metric: TrendMetric, record: Json): string | undefined {
-	const value = metric === "activities" ? record.startTimeLocal : record.calendarDate;
+	const value = metric === "activities" ? record.startTimeLocal : metric === "weight" ? record.date : record.calendarDate;
 	return typeof value === "string" && value.length >= 10 ? value.slice(0, 10) : undefined;
 }
 
@@ -320,6 +360,8 @@ export function buildTrends(opts: {
 			elevationGainMeters: "meters",
 			heartRate: "bpm",
 			hrv: "milliseconds",
+			vo2max: "ml/kg/min",
+			weight: "kg",
 			stress: "0-100",
 			bodyBattery: "0-100",
 		},
@@ -333,20 +375,6 @@ export function buildTrends(opts: {
 // ---------------------------------------------------------------------------
 // Fetching
 // ---------------------------------------------------------------------------
-
-/** Maps `items` with at most `limit` calls of `fn` running at once, keeping the order. */
-export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-	const results = new Array<R>(items.length);
-	let next = 0;
-	const worker = async () => {
-		while (next < items.length) {
-			const i = next++;
-			results[i] = await fn(items[i]!);
-		}
-	};
-	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-	return results;
-}
 
 type Range = { startDate: string; endDate: string };
 
@@ -400,6 +428,36 @@ async function fetchActivities(
 	return out;
 }
 
+async function fetchVo2Max(garmin: GarminClient, range: Range): Promise<Json[]> {
+	const chunks = chunkRange(range.startDate, range.endDate, VO2_CHUNK_DAYS);
+	const pages = await mapLimit(chunks, CONCURRENCY, (chunk) =>
+		garmin.get<unknown[]>(`/metrics-service/metrics/maxmet/daily/${chunk.startDate}/${chunk.endDate}`),
+	);
+	return vo2DailyRecords(pages.flatMap((page) => (Array.isArray(page) ? page : [])));
+}
+
+async function fetchWeightEntries(garmin: GarminClient, range: Range): Promise<Json[]> {
+	const chunks = chunkRange(range.startDate, range.endDate, WEIGHT_CHUNK_DAYS);
+	const pages = await mapLimit(chunks, CONCURRENCY, (chunk) =>
+		garmin.get<unknown[]>(`/weight-service/weight/all/${chunk.startDate}/${chunk.endDate}`),
+	);
+	return pages.flatMap((page) => (Array.isArray(page) ? page : []).map((entry) => shapeWeight(entry)));
+}
+
+/** Worst-case number of Garmin requests for these metrics over this range (activities: all pages). */
+export function plannedRequests(range: Range, metrics: readonly TrendMetric[]): number {
+	const chunks = (size: number) => chunkRange(range.startDate, range.endDate, size).length;
+	const perMetric: Record<TrendMetric, () => number> = {
+		sleep: () => chunks(SLEEP_CHUNK_DAYS),
+		daily: () => chunks(DAILY_CHUNK_DAYS),
+		hrv: () => chunks(HRV_CHUNK_DAYS),
+		activities: () => ACTIVITY_MAX_PAGES,
+		vo2max: () => chunks(VO2_CHUNK_DAYS),
+		weight: () => chunks(WEIGHT_CHUNK_DAYS),
+	};
+	return metrics.reduce((sum, metric) => sum + perMetric[metric](), 0);
+}
+
 /**
  * Fetches every requested metric in parallel. A metric that fails is reported in `errors`
  * while the others are still returned; if all of them fail, the first error is thrown.
@@ -409,6 +467,13 @@ export async function collectTrends(
 	opts: Range & { period: TrendPeriod; metrics: readonly TrendMetric[]; activityType?: string },
 ): Promise<Json> {
 	const range = { startDate: opts.startDate, endDate: opts.endDate };
+	const planned = plannedRequests(range, opts.metrics);
+	if (planned > MAX_GARMIN_REQUESTS) {
+		throw new RangeError(
+			`This would take up to ${planned} Garmin requests (the limit per call is ${MAX_GARMIN_REQUESTS}). ` +
+				"Ask for fewer metrics or a shorter range.",
+		);
+	}
 	// Fetch the Garmin access token once up front, so parallel requests don't each request one.
 	await garmin.getAccessToken();
 
@@ -418,6 +483,8 @@ export async function collectTrends(
 		daily: () => fetchDaily(garmin, range),
 		hrv: () => fetchHrv(garmin, range),
 		activities: () => fetchActivities(garmin, range, opts.activityType, notes),
+		vo2max: () => fetchVo2Max(garmin, range),
+		weight: () => fetchWeightEntries(garmin, range),
 	};
 
 	const data: TrendData = {};
