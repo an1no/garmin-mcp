@@ -38,11 +38,12 @@
 	],
 
 	// OAuth state (clients, grants, hashed tokens) + the cached, encrypted Garmin access token.
-	// Replace the id with the one printed by: npx wrangler kv namespace create OAUTH_KV
+	// No "id" on purpose: on the first deploy Wrangler creates this KV namespace automatically,
+	// and later deploys keep using the namespace already bound to the deployed Worker.
+	// (Wrangler may write the new id back here after an interactive deploy; that's fine too.)
 	"kv_namespaces": [
 		{
-			"binding": "OAUTH_KV",
-			"id": "29c797aa997a4f6b8077433208919d54"
+			"binding": "OAUTH_KV"
 		}
 	],
 
