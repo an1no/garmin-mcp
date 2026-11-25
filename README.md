@@ -106,7 +106,7 @@ chat).
 For Claude Code, install it as a personal skill:
 
 ```powershell
-New-Item -ItemType Directory -Force "$HOME.claudeskillsgarmin-mcp-setup" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/an1no/garmin-mcp/main/skills/garmin-mcp-setup/SKILL.md" -OutFile "$HOME.claudeskillsgarmin-mcp-setupSKILL.md"
+New-Item -ItemType Directory -Force "$HOME/.claude/skills/garmin-mcp-setup" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/an1no/garmin-mcp/main/skills/garmin-mcp-setup/SKILL.md" -OutFile "$HOME/.claude/skills/garmin-mcp-setup/SKILL.md"
 ```
 
 On macOS or Linux:
