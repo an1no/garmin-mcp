@@ -48,9 +48,9 @@
 	],
 
 	"vars": {
-		// IANA timezone used when a tool call omits a date ("today").
-		// Set it to your own, e.g. "Europe/Berlin" or "America/New_York".
-		"TIMEZONE": "UTC"
+		// Timezone that decides what "today" means when a tool call omits a date.
+		// "auto" uses the time zone in your Garmin profile (falls back to UTC); or name one, e.g. "Europe/Berlin".
+		"TIMEZONE": "auto"
 	},
 
 	// Set with: npx wrangler secret put <NAME>

@@ -1,7 +1,7 @@
 # Garmin Connect in Gemini: your own MCP server on Cloudflare
 
 A small, private server that lets the **Gemini web app** (`gemini.google.com`), or any other MCP client, read **your
-own Garmin Connect data**: activities, sleep, HRV, Body Battery and daily health stats. It runs on Cloudflare's free
+own Garmin Connect data**: activities, sleep, HRV, Body Battery, VO2 max, weight and daily health stats. It runs on Cloudflare's free
 plan, nothing sits in between, and only you can connect apps to it.
 
 You ask Gemini things like *"@Garmin Connect how did I sleep this week?"*, and Gemini calls your server, which reads
@@ -58,7 +58,8 @@ These commands work the same in PowerShell, Windows Terminal, macOS Terminal and
 1. **Prerequisites:** checks Node.js and installs dependencies if needed.
 2. **Cloudflare login:** if you're not logged in, it opens your browser so you can log in (or sign up). If you
    have several Cloudflare accounts, it asks which one to use.
-3. **Settings:** offers to use your computer's timezone, so "today" means today where you live.
+3. **Settings:** makes sure "today" means today where you live (the server reads your timezone from your Garmin
+   profile).
 4. **Secrets:** asks you to paste your Garmin Personal API key (the input is hidden), checks it with Garmin,
    and generates a strong admin password.
 5. **Deploy:** uploads the server to Cloudflare with both secrets. Cloudflare's storage (KV) is created
@@ -123,6 +124,9 @@ Garmin emails you about a week before the key expires. See [Renewing the Garmin 
 | `get_sleep_data` | Total sleep, deep/light/REM/awake time, sleep score and sub-scores, overnight heart rate, stress, SpO2, respiration, sleep need | One night, or up to 31 |
 | `get_hrv_data` | Last-night HRV average and 5-minute high, 7-day average, HRV status, baseline range | Last 7 days by default |
 | `get_body_battery` | Charged/drained, start/end/highest/lowest level, the events that moved it, optional intraday timeline | Up to 31 days |
+| `get_day_details` | One day in local time: heart rate per interval (avg/min/max, default 15 min), resting, the day's lowest/highest reading with times, abnormal readings; overnight HRV readings with sleep start/end; SpO2 hourly averages, sleep average, latest | One day |
+| `get_vo2max` | VO2 max (ml/kg/min) for running/walking, cycling and rowing: first and latest value, change, min/max, the dates it changed | Up to 1 year (default 365 days) |
+| `get_weight` | Weight, BMI, body fat and water %, muscle and bone mass, visceral fat, metabolic age: first/latest/lowest/highest, change, average, weight goal, daily values or monthly averages | Up to 1 year (default 90 days) |
 
 Example prompts:
 
@@ -133,12 +137,16 @@ Example prompts:
 - `@Garmin Connect how did my sleep change month by month this year?`
 - `@Garmin Connect how far did I run in 2025, and what was my longest run?`
 - `@Garmin Connect list all my races`
+- `@Garmin Connect how has my VO2 max changed this year?`
+- `@Garmin Connect what was my heart rate like yesterday afternoon, and how did my HRV look overnight?`
+- `@Garmin Connect how much weight have I lost since January, and how far am I from my goal?`
 
 `get_trends` exists so that questions about long periods stay fast and accurate: instead of sending the model a year
 of days (hundreds of records), the server sends one row per week or month plus an overall summary.
 
 All tools are read-only: nothing is ever changed in your Garmin account. Dates are `YYYY-MM-DD`; when a question
-has no date, "today" is computed in the `TIMEZONE` set in `wrangler.jsonc`.
+has no date, "today" is computed in the timezone from your Garmin profile (or the zone you set as `TIMEZONE` in
+`wrangler.jsonc`).
 
 ---
 
@@ -196,7 +204,7 @@ Found a security problem? Please report it privately, as described in [SECURITY.
 | Deploy after changing code | `npm run check`, then `npm run deploy` (or `npm run setup`) |
 | Renew the Garmin key | `npm run setup -- --update-key` |
 | Change the admin password | `npx wrangler secret put MCP_ADMIN_PASSWORD` |
-| Change the timezone | Edit `TIMEZONE` in `wrangler.jsonc` (e.g. `Europe/Berlin`), then `npm run deploy` |
+| Change the timezone | By default (`"TIMEZONE": "auto"`) it follows your Garmin profile, re-read once a day. To force one, set `TIMEZONE` in `wrangler.jsonc` (e.g. `Europe/Berlin`), then `npm run deploy` |
 | Watch live logs | `npx wrangler tail` |
 | Save your changes to GitHub | `git add -A`, `git commit -m "Describe what changed"`, `git push` |
 
@@ -317,7 +325,7 @@ npx @modelcontextprotocol/inspector
 | Gemini asks to reconnect | The connection wasn't used for 30 days, or grants were deleted. Reconnect and approve again. |
 | "Date range is N days" | Sleep and Body Battery allow 31 days per call, daily summaries 366. For longer periods ask for trends (`get_trends` covers a year per call) or shorter ranges. |
 | `get_trends` shows `errors` for one metric | Garmin refused or timed out for that data (e.g. rate limiting); the other metrics are still correct. Ask again a bit later. |
-| "Today" is off by a day | Set `TIMEZONE` in `wrangler.jsonc` to your zone and deploy. |
+| "Today" is off by a day | Check the time zone in your Garmin Connect profile settings (the server re-reads it daily), or set `TIMEZONE` in `wrangler.jsonc` to your zone and deploy. |
 | Gemini insists on a client ID and secret | Register a client yourself (below), then paste its `client_id` and `client_secret`. |
 
 Registering a client by hand (replace both placeholders; Gemini shows its redirect URL in the advanced settings):
@@ -337,8 +345,11 @@ src/
   auth-handler.ts        Landing page and the password-protected /authorize consent flow
   security.ts            Constant-time password check and KV-backed brute-force lockout
   html.ts                HTML templates and security headers for the auth pages
-  mcp.ts                 GarminMCP (McpAgent Durable Object) and the seven MCP tools
+  mcp.ts                 GarminMCP (McpAgent Durable Object) and the ten MCP tools
   trends.ts              get_trends: chunked fetching and weekly/monthly aggregation
+  fitness.ts             get_vo2max and get_weight: fetching and shaping
+  intraday.ts            get_day_details: heart rate, overnight HRV and SpO2 per interval, in local time
+  profile.ts             Timezone for "today": TIMEZONE, or the Garmin profile's (cached in KV)
   garmin.ts              Garmin Personal API client with encrypted token caching
   format.ts              Date helpers and response shaping
 wrangler.jsonc           Worker config: Durable Object, KV (auto-provisioned), vars, required secrets

@@ -358,17 +358,23 @@ async function configureTimezone() {
 	const match = /"TIMEZONE"\s*:\s*"([^"]*)"/.exec(text);
 	if (!match) return;
 	const current = match[1];
-	const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+	// "UTC" was the default before the server could read the timezone from the Garmin profile.
 	let chosen = current;
-	if (current === "UTC" && detected && detected !== "UTC") {
-		const answer = interactive ? await ask(`  Use your timezone "${detected}" for "today"? [Y/n]: `) : "y";
-		if (!/^n/i.test(answer.trim())) chosen = detected;
+	if (current === "UTC") {
+		const answer = interactive
+			? await ask('  Take the timezone for "today" from your Garmin profile (recommended)? [Y/n]: ')
+			: "y";
+		if (!/^n/i.test(answer.trim())) chosen = "auto";
 	}
 	if (chosen !== current) {
 		writeFileSync(CONFIG_FILE, text.replace(match[0], `"TIMEZONE": "${chosen}"`));
 	}
-	ok(`Timezone: ${chosen} (change TIMEZONE in wrangler.jsonc any time)`);
+	ok(
+		chosen.toLowerCase() === "auto"
+			? "Timezone: taken from your Garmin profile (set TIMEZONE in wrangler.jsonc to override)"
+			: `Timezone: ${chosen} (set TIMEZONE to "auto" in wrangler.jsonc to use your Garmin profile's)`,
+	);
 }
 
 function parseEnvFile(text) {

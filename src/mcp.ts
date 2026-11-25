@@ -17,6 +17,9 @@ import {
 	summarizeSleep,
 	todayIn,
 } from "./format";
+import { fetchVo2Max, fetchWeight } from "./fitness";
+import { DAY_DETAIL_PARTS, fetchDayDetails } from "./intraday";
+import { resolveTimeZone } from "./profile";
 import { collectTrends, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
 
 /** Props stored in the OAuth grant by the /authorize handler (see auth-handler.ts). */
@@ -39,14 +42,16 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: 
  */
 export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 	server = new McpServer(
-		{ name: "garmin-connect", version: "1.1.0" },
+		{ name: "garmin-connect", version: "1.3.0" },
 		{
 			instructions:
-				"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery). " +
-				"Dates are YYYY-MM-DD calendar dates in the user's local time. Distances are meters, durations seconds, speeds m/s " +
+				"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery, " +
+				"VO2 max, weight and body composition). Dates are YYYY-MM-DD calendar dates in the user's local time; when a " +
+				"date is omitted, 'today' follows the timezone in the user's Garmin profile. Distances are meters, durations seconds, speeds m/s " +
 				"unless a field name says otherwise. Use get_activities to find activityIds, then get_activity_details for one workout. " +
 				"For questions about longer periods (trends, averages, totals, comparing weeks or months) use get_trends, which " +
-				"summarizes up to a year per call, instead of fetching day-by-day data.",
+				"summarizes up to a year per call, instead of fetching day-by-day data. For heart rate through a single day, " +
+				"the overnight HRV readings or SpO2 of one night, use get_day_details.",
 		},
 	);
 
@@ -57,8 +62,33 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 		return this.client;
 	}
 
-	private today(): string {
-		return todayIn(this.env.TIMEZONE);
+	private timeZone?: string;
+
+	/**
+	 * A range of up to a year: endDate defaults to today, startDate to `defaultDays` days ending on endDate.
+	 */
+	private async rangeEndingToday(
+		startDate: string | undefined,
+		endDate: string | undefined,
+		defaultDays: number,
+	): Promise<{ startDate: string; endDate: string }> {
+		const today = await this.today();
+		if (endDate) assertDate(endDate, "endDate");
+		const end = endDate ?? today;
+		return resolveRange(startDate ?? addDays(end, -(defaultDays - 1)), end, { today, defaultDays, maxDays: 366 });
+	}
+
+	/** The configured timezone, or the Garmin profile's one when TIMEZONE is "auto". */
+	private async zone(): Promise<string> {
+		if (this.timeZone) return this.timeZone;
+		const resolved = await resolveTimeZone(this.env.TIMEZONE, this.garmin(), this.env.OAUTH_KV);
+		if (resolved.cacheable) this.timeZone = resolved.zone;
+		return resolved.zone;
+	}
+
+	/** Today's date in the user's timezone. */
+	private async today(): Promise<string> {
+		return todayIn(await this.zone());
 	}
 
 	async init(): Promise<void> {
@@ -201,12 +231,12 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 			async ({ date: day, startDate, endDate }) =>
 				run(async () => {
 					if (startDate || endDate) {
-						const range = resolveRange(startDate, endDate, { today: this.today(), defaultDays: 1, maxDays: 366 });
+						const range = resolveRange(startDate, endDate, { today: await this.today(), defaultDays: 1, maxDays: 366 });
 						const result = await this.garmin().get<{ data?: unknown[] }>("/usersummary-service/v2/dailysummaries", range);
 						const days = (result?.data ?? []).map(summarizeDailySummaryV2);
 						return { ...range, count: days.length, days };
 					}
-					const calendarDate = day ?? this.today();
+					const calendarDate = day ?? (await this.today());
 					assertDate(calendarDate, "date");
 					const result = await this.garmin().get("/usersummary-service/usersummary/daily", { calendarDate });
 					return result ? summarizeDailySummary(result) : { calendarDate, message: "No data for this date." };
@@ -232,12 +262,12 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 			async ({ date: day, startDate, endDate }) =>
 				run(async () => {
 					if (startDate || endDate) {
-						const range = resolveRange(startDate, endDate, { today: this.today(), defaultDays: 1, maxDays: 31 });
+						const range = resolveRange(startDate, endDate, { today: await this.today(), defaultDays: 1, maxDays: 31 });
 						const result = await this.garmin().get<unknown[]>("/sleep-service/sleep/dailySleepSummariesByDate", range);
 						const nights = (Array.isArray(result) ? result : []).map(summarizeSleep);
 						return { ...range, count: nights.length, units: { stages: "seconds" }, nights };
 					}
-					const calendarDate = day ?? this.today();
+					const calendarDate = day ?? (await this.today());
 					assertDate(calendarDate, "date");
 					const result = await this.garmin().get("/sleep-service/sleep/dailySleep", { date: calendarDate });
 					return result ? summarizeSleep(result) : { calendarDate, message: "No sleep recorded for this date." };
@@ -260,7 +290,7 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 			},
 			async ({ startDate, endDate }) =>
 				run(async () => {
-					const today = this.today();
+					const today = await this.today();
 					const end = endDate ?? today;
 					const range = resolveRange(startDate ?? addDays(end, -6), end, { today, defaultDays: 7, maxDays: 366 });
 					const result = await this.garmin().get(
@@ -299,13 +329,99 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 			},
 			async ({ startDate, endDate, includeTimeline, chunks }) =>
 				run(async () => {
-					const range = resolveRange(startDate, endDate, { today: this.today(), defaultDays: 1, maxDays: 31 });
+					const range = resolveRange(startDate, endDate, { today: await this.today(), defaultDays: 1, maxDays: 31 });
 					const result = await this.garmin().get<unknown[]>("/wellness-service/wellness/bodyBattery/reports/daily", {
 						...range,
 						chunks: includeTimeline ? (chunks ?? 24) : chunks,
 					});
 					const days = (Array.isArray(result) ? result : []).map((r) => summarizeBodyBattery(r, includeTimeline));
 					return { ...range, count: days.length, days };
+				}),
+		);
+
+		// ------------------------------------------------------------------ day details
+		this.server.registerTool(
+			"get_day_details",
+			{
+				title: "Get Garmin day details",
+				description:
+					"Intraday detail for one day, in local time: heart rate through the day (average/min/max per interval, " +
+					"resting, the day's lowest and highest reading with times, readings flagged as abnormal), the overnight " +
+					"HRV readings of the night that ended on this date (with sleep start/end) and SpO2 (hourly averages, " +
+					"sleep average, latest). Use for questions about a specific day or night, e.g. 'what was my heart rate " +
+					"this afternoon?' or 'how did my HRV look overnight?'. For several days use the daily tools or get_trends.",
+				inputSchema: {
+					date: date("Calendar date, YYYY-MM-DD. Defaults to today.").optional(),
+					include: z
+						.array(z.enum(DAY_DETAIL_PARTS))
+						.min(1)
+						.describe("Which data to include: heartRate, hrv, spo2. Defaults to all three.")
+						.optional(),
+					intervalMinutes: z
+						.number()
+						.int()
+						.min(5)
+						.max(60)
+						.default(15)
+						.describe("Length of each averaged interval in minutes, 5-60 (default 15). HRV is measured every 5 minutes."),
+				},
+				annotations: { title: "Get Garmin day details", ...READ_ONLY },
+			},
+			async ({ date: day, include, intervalMinutes }) =>
+				run(async () => {
+					const calendarDate = day ?? (await this.today());
+					assertDate(calendarDate, "date");
+					return fetchDayDetails(this.garmin(), {
+						date: calendarDate,
+						timeZone: await this.zone(),
+						intervalMinutes,
+						parts: [...new Set(include ?? DAY_DETAIL_PARTS)],
+					});
+				}),
+		);
+
+		// ------------------------------------------------------------------ VO2 max
+		this.server.registerTool(
+			"get_vo2max",
+			{
+				title: "Get Garmin VO2 max",
+				description:
+					"VO2 max history (Garmin's estimate of aerobic fitness, ml/kg/min) for generic (running/walking), cycling " +
+					"and rowing, where available. Per sport: first and latest value in the range, the change, min/max and the " +
+					"dates the whole-number value changed. Defaults to the last 365 days; up to 366 days per call.",
+				inputSchema: {
+					startDate: date("Range start (inclusive), YYYY-MM-DD. Defaults to 364 days before endDate.").optional(),
+					endDate: date("Range end (inclusive), YYYY-MM-DD. Defaults to today.").optional(),
+				},
+				annotations: { title: "Get Garmin VO2 max", ...READ_ONLY },
+			},
+			async ({ startDate, endDate }) =>
+				run(async () => {
+					const range = await this.rangeEndingToday(startDate, endDate, 365);
+					return fetchVo2Max(this.garmin(), range);
+				}),
+		);
+
+		// ------------------------------------------------------------------ weight
+		this.server.registerTool(
+			"get_weight",
+			{
+				title: "Get Garmin weight and body composition",
+				description:
+					"Weight and body composition from a Garmin scale or manual entries: weight (kg), BMI, body fat %, body " +
+					"water %, muscle and bone mass (kg), visceral fat, metabolic age. Returns the first, latest, lowest and " +
+					"highest values, the change and average over the range, the weight goal if one is set, and daily values " +
+					"(monthly averages when there are many measurements). Defaults to the last 90 days; up to 366 days per call.",
+				inputSchema: {
+					startDate: date("Range start (inclusive), YYYY-MM-DD. Defaults to 89 days before endDate.").optional(),
+					endDate: date("Range end (inclusive), YYYY-MM-DD. Defaults to today.").optional(),
+				},
+				annotations: { title: "Get Garmin weight and body composition", ...READ_ONLY },
+			},
+			async ({ startDate, endDate }) =>
+				run(async () => {
+					const range = await this.rangeEndingToday(startDate, endDate, 90);
+					return fetchWeight(this.garmin(), range);
 				}),
 		);
 
@@ -345,7 +461,7 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 			},
 			async ({ startDate, endDate, period, metrics, activityType }) =>
 				run(async () => {
-					const today = this.today();
+					const today = await this.today();
 					const end = endDate ?? today;
 					if (endDate) assertDate(endDate, "endDate");
 					const range = resolveRange(startDate ?? addDays(end, -83), end, {
