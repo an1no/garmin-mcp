@@ -116,7 +116,8 @@ Garmin emails you about a week before the key expires. See [Renewing the Garmin 
 
 | Tool | What it returns | Range per call |
 | --- | --- | --- |
-| `get_activities` | Activity list: `activityId`, name, type, start time, distance (m), duration (s), elevation gain (m), average/max heart rate, average speed (m/s), calories, power | Up to 100, paged; filter by dates, type, subtype or text |
+| `get_trends` | Weekly or monthly statistics computed on the server. **Sleep:** average hours, stage minutes, score, best/worst night. **Daily:** steps, distance, resting heart rate, stress, Body Battery, intensity minutes. **HRV:** average, range, status counts. **Activities:** count, distance, time, elevation, calories, per type, longest | Up to 1 year in one call |
+| `get_activities` | Activity list: `activityId`, name, type, event type, start time, location, distance (m), duration (s), elevation gain (m), average/max heart rate, average speed (m/s), calories, power | Up to 100, paged; filter by dates, type, subtype, text, event type (e.g. races), distance, duration, elevation, power, favorites or start area; sort by date, distance, duration or name |
 | `get_activity_details` | One workout: speed, heart rate, power, cadence, elevation, training effect and load, temperature, splits. `raw: true` returns everything | One activity |
 | `get_daily_summary` | Steps, distance, calories, resting/min/max heart rate, stress, Body Battery, intensity minutes, floors, SpO2, respiration, hydration | One day, or up to 1 year |
 | `get_sleep_data` | Total sleep, deep/light/REM/awake time, sleep score and sub-scores, overnight heart rate, stress, SpO2, respiration, sleep need | One night, or up to 31 |
@@ -129,6 +130,12 @@ Example prompts:
 - `@Garmin Connect how did I sleep last night, compared with the rest of the week?`
 - `@Garmin Connect show my HRV status and Body Battery for the last 7 days`
 - `@Garmin Connect give me the details of my most recent ride`
+- `@Garmin Connect how did my sleep change month by month this year?`
+- `@Garmin Connect how far did I run in 2025, and what was my longest run?`
+- `@Garmin Connect list all my races`
+
+`get_trends` exists so that questions about long periods stay fast and accurate: instead of sending the model a year
+of days (hundreds of records), the server sends one row per week or month plus an overall summary.
 
 All tools are read-only: nothing is ever changed in your Garmin account. Dates are `YYYY-MM-DD`; when a question
 has no date, "today" is computed in the `TIMEZONE` set in `wrangler.jsonc`.
@@ -308,7 +315,8 @@ npx @modelcontextprotocol/inspector
 | Approval page: "Too many attempts" | Wait 15 minutes (up to 1 hour), then start the connection again from Gemini. |
 | Approval page: "expired or was already used" | Start the connection again from Gemini; each page works once, for 10 minutes. |
 | Gemini asks to reconnect | The connection wasn't used for 30 days, or grants were deleted. Reconnect and approve again. |
-| "Date range is N days" | Sleep and Body Battery allow 31 days per call, daily summaries 366. Ask for shorter ranges. |
+| "Date range is N days" | Sleep and Body Battery allow 31 days per call, daily summaries 366. For longer periods ask for trends (`get_trends` covers a year per call) or shorter ranges. |
+| `get_trends` shows `errors` for one metric | Garmin refused or timed out for that data (e.g. rate limiting); the other metrics are still correct. Ask again a bit later. |
 | "Today" is off by a day | Set `TIMEZONE` in `wrangler.jsonc` to your zone and deploy. |
 | Gemini insists on a client ID and secret | Register a client yourself (below), then paste its `client_id` and `client_secret`. |
 
@@ -329,7 +337,8 @@ src/
   auth-handler.ts        Landing page and the password-protected /authorize consent flow
   security.ts            Constant-time password check and KV-backed brute-force lockout
   html.ts                HTML templates and security headers for the auth pages
-  mcp.ts                 GarminMCP (McpAgent Durable Object) and the six MCP tools
+  mcp.ts                 GarminMCP (McpAgent Durable Object) and the seven MCP tools
+  trends.ts              get_trends: chunked fetching and weekly/monthly aggregation
   garmin.ts              Garmin Personal API client with encrypted token caching
   format.ts              Date helpers and response shaping
 wrangler.jsonc           Worker config: Durable Object, KV (auto-provisioned), vars, required secrets

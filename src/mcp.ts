@@ -17,6 +17,7 @@ import {
 	summarizeSleep,
 	todayIn,
 } from "./format";
+import { collectTrends, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
 
 /** Props stored in the OAuth grant by the /authorize handler (see auth-handler.ts). */
 export type AuthProps = {
@@ -38,12 +39,14 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: 
  */
 export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 	server = new McpServer(
-		{ name: "garmin-connect", version: "1.0.0" },
+		{ name: "garmin-connect", version: "1.1.0" },
 		{
 			instructions:
 				"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery). " +
 				"Dates are YYYY-MM-DD calendar dates in the user's local time. Distances are meters, durations seconds, speeds m/s " +
-				"unless a field name says otherwise. Use get_activities to find activityIds, then get_activity_details for one workout.",
+				"unless a field name says otherwise. Use get_activities to find activityIds, then get_activity_details for one workout. " +
+				"For questions about longer periods (trends, averages, totals, comparing weeks or months) use get_trends, which " +
+				"summarizes up to a year per call, instead of fetching day-by-day data.",
 		},
 	);
 
@@ -65,9 +68,12 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 			{
 				title: "List Garmin activities",
 				description:
-					"Search the user's Garmin activities (runs, rides, swims, workouts...) newest first. " +
-					"Returns concise summaries: activityId, activityName, activityType, startTimeLocal, distance (m), duration (s), " +
-					"elevationGain (m), averageHR, maxHR, averageSpeed (m/s). Use the activityId with get_activity_details.",
+					"Search the user's Garmin activities (runs, rides, swims, workouts...), newest first by default. " +
+					"Returns concise summaries: activityId, activityName, activityType, eventType, startTimeLocal, locationName, " +
+					"distance (m), duration (s), elevationGain (m), averageHR, maxHR, averageSpeed (m/s). Use the activityId with " +
+					"get_activity_details. Filters can be combined, e.g. the longest runs (activityType=running, sortBy=distance), " +
+					"races only (eventType=race), rides over 50 km (minDistance=50000) or activities that started in an area. " +
+					"For totals over long periods, prefer get_trends.",
 				inputSchema: {
 					start: z.number().int().min(0).default(0).describe("Zero-based offset for pagination (default 0)."),
 					limit: z.number().int().min(1).max(100).default(20).describe("Max activities to return, 1-100 (default 20)."),
@@ -88,13 +94,43 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 						.describe("Activity subtype key, e.g. trail_running, road_biking, mountain_biking, indoor_cycling, lap_swimming.")
 						.optional(),
 					search: z.string().min(1).max(200).describe("Text to search for in activity names and descriptions.").optional(),
+					sortBy: z
+						.enum(["startLocal", "distance", "duration", "name"])
+						.describe("Field to sort by. Defaults to startLocal (start time).")
+						.optional(),
+					sortOrder: z.enum(["desc", "asc"]).describe("Sort direction. Defaults to desc (newest / largest first).").optional(),
+					eventType: z
+						.enum(["race", "training", "recreation", "fitness", "specialEvent", "uncategorized"])
+						.describe("Only activities with this event type, e.g. race.")
+						.optional(),
+					minDistance: z.number().min(0).describe("Minimum distance in meters (10 km = 10000).").optional(),
+					maxDistance: z.number().min(0).describe("Maximum distance in meters.").optional(),
+					minDuration: z.number().min(0).describe("Minimum timer duration in seconds (1 hour = 3600).").optional(),
+					maxDuration: z.number().min(0).describe("Maximum timer duration in seconds.").optional(),
+					minElevation: z.number().min(0).describe("Minimum total elevation gain in meters.").optional(),
+					maxElevation: z.number().min(0).describe("Maximum total elevation gain in meters.").optional(),
+					minAvgPower: z.number().min(0).describe("Minimum average power in watts.").optional(),
+					favoritesOnly: z.boolean().describe("Only activities marked as favorites.").optional(),
+					area: z
+						.object({
+							north: z.number().min(-90).max(90).describe("Northern latitude, decimal degrees."),
+							south: z.number().min(-90).max(90).describe("Southern latitude, decimal degrees."),
+							east: z.number().min(-180).max(180).describe("Eastern longitude, decimal degrees."),
+							west: z.number().min(-180).max(180).describe("Western longitude, decimal degrees."),
+						})
+						.describe("Only activities that started inside this bounding box, e.g. a city.")
+						.optional(),
 				},
 				annotations: { title: "List Garmin activities", ...READ_ONLY },
 			},
-			async ({ start, limit, startDate, endDate, activityType, activitySubType, search }) =>
+			async ({ start, limit, startDate, endDate, activityType, activitySubType, search, area, favoritesOnly, ...filters }) =>
 				run(async () => {
 					if (startDate) assertDate(startDate, "startDate");
 					if (endDate) assertDate(endDate, "endDate");
+					assertMinMax(filters.minDistance, filters.maxDistance, "Distance");
+					assertMinMax(filters.minDuration, filters.maxDuration, "Duration");
+					assertMinMax(filters.minElevation, filters.maxElevation, "Elevation");
+					if (area && area.south > area.north) throw new RangeError("area.south must not be north of area.north.");
 					const result = await this.garmin().get<unknown[]>("/activitylist-service/activities/search/activities", {
 						start,
 						limit,
@@ -103,6 +139,12 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 						activityType,
 						activitySubType,
 						search,
+						...filters,
+						favorite: favoritesOnly === undefined ? undefined : favoritesOnly ? 1 : -1,
+						upperLatitude: area?.north,
+						lowerLatitude: area?.south,
+						rightLongitude: area?.east,
+						leftLongitude: area?.west,
 					});
 					const activities = (Array.isArray(result) ? result : []).map(summarizeActivity);
 					return {
@@ -266,6 +308,67 @@ export class GarminMCP extends McpAgent<Env, Record<string, never>, AuthProps> {
 					return { ...range, count: days.length, days };
 				}),
 		);
+
+		// ------------------------------------------------------------------ trends
+		this.server.registerTool(
+			"get_trends",
+			{
+				title: "Get Garmin trends",
+				description:
+					"Weekly or monthly statistics over up to a year, computed on the server in one call. Sleep: nights, average " +
+					"hours and stage minutes, sleep score (avg/min/max), best and worst night. Daily: steps (total/avg/best day), " +
+					"distance, resting heart rate (avg/min/max), stress, Body Battery, intensity minutes. HRV: average/min/max, " +
+					"latest status, status counts. Activities: count, distance, time, elevation and calories, per type, plus the " +
+					"longest. Each period row and an `overall` block cover the whole range. Use this for trends, averages, totals " +
+					"and comparisons (e.g. 'how did my sleep change this year?', 'how far did I run in 2025?', 'compare March " +
+					"and April') instead of fetching day-by-day data.",
+				inputSchema: {
+					startDate: date("Range start (inclusive), YYYY-MM-DD. Defaults to 12 weeks before endDate.").optional(),
+					endDate: date("Range end (inclusive), YYYY-MM-DD. Defaults to today.").optional(),
+					period: z
+						.enum(["week", "month"])
+						.describe("Group by week (Monday start) or calendar month. Defaults to week up to 92 days, month beyond.")
+						.optional(),
+					metrics: z
+						.array(z.enum(TREND_METRICS))
+						.min(1)
+						.describe("Which data to include: sleep, daily, hrv, activities. Defaults to all four.")
+						.optional(),
+					activityType: z
+						.string()
+						.min(1)
+						.max(64)
+						.describe("Limit the activity statistics to one parent type key, e.g. running or cycling.")
+						.optional(),
+				},
+				annotations: { title: "Get Garmin trends", ...READ_ONLY },
+			},
+			async ({ startDate, endDate, period, metrics, activityType }) =>
+				run(async () => {
+					const today = this.today();
+					const end = endDate ?? today;
+					if (endDate) assertDate(endDate, "endDate");
+					const range = resolveRange(startDate ?? addDays(end, -83), end, {
+						today,
+						defaultDays: 84,
+						maxDays: TREND_MAX_DAYS,
+					});
+					const days = (Date.parse(range.endDate) - Date.parse(range.startDate)) / 86_400_000 + 1;
+					return collectTrends(this.garmin(), {
+						...range,
+						period: period ?? (days <= 92 ? "week" : "month"),
+						metrics: [...new Set(metrics ?? TREND_METRICS)],
+						activityType,
+					});
+				}),
+		);
+	}
+}
+
+/** Throws a readable error when a min/max filter pair is inverted. */
+function assertMinMax(min: number | undefined, max: number | undefined, name: string): void {
+	if (min !== undefined && max !== undefined && min > max) {
+		throw new RangeError(`${name}: the minimum (${min}) is larger than the maximum (${max}).`);
 	}
 }
 

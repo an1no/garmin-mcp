@@ -105,7 +105,8 @@ remains.
 ## If the user wants changes
 
 - Code map: `src/index.ts` (OAuth provider and routes), `src/auth-handler.ts` (approval page), `src/security.ts`
-  (password check, lockout), `src/mcp.ts` (tools), `src/garmin.ts` (Garmin API client, token cache),
+  (password check, lockout), `src/mcp.ts` (tools), `src/trends.ts` (`get_trends` fetching and aggregation),
+  `src/garmin.ts` (Garmin API client, token cache),
   `src/format.ts` (response shaping), `scripts/setup.mjs` (setup).
 - Garmin API reference with exact parameter names: https://developer.garmin.com/gc-developer-program/personal/swagger-docs/
 - Garmin's token endpoint needs `Accept: application/json, text/plain, */*`; `application/json` alone gets 406.
