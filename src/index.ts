@@ -6,11 +6,14 @@
  *   /token, /register                        OAuth 2.1 token endpoint and Dynamic Client Registration
  *   /.well-known/oauth-authorization-server  Authorization server metadata (RFC 8414)
  *   /.well-known/oauth-protected-resource    Protected resource metadata (RFC 9728)
+ *
+ * A cron trigger sends the optional morning summary to Telegram (summary.ts).
  */
 
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { authHandler, GARMIN_READ_SCOPE } from "./auth-handler";
 import { GarminMCP } from "./mcp";
+import { logDailySummary, runDailySummary, type SummaryEnv } from "./summary";
 
 // Durable Object class referenced by wrangler.jsonc (MCP_OBJECT binding).
 export { GarminMCP };
@@ -68,5 +71,14 @@ export default {
 			});
 		}
 		return provider.fetch(request, env, ctx);
+	},
+
+	// Cron trigger (wrangler.jsonc): the morning summary in Telegram, when it's set up (summary.ts).
+	async scheduled(controller, env) {
+		try {
+			logDailySummary(await runDailySummary(env as SummaryEnv, new Date(controller.scheduledTime)));
+		} catch (error) {
+			console.error("Daily summary failed:", error instanceof Error ? error.name : "unknown error");
+		}
 	},
 } satisfies ExportedHandler<Env>;

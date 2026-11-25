@@ -53,12 +53,21 @@
 		"TIMEZONE": "auto",
 		// "on" adds the get_menstrual_cycle tool (cycle day numbers, flow, symptoms, moods). Off by default:
 		// it's sensitive data, so only turn it on if you track a cycle in Garmin Connect and want it in your chats.
-		"CYCLE_TRACKING": "off"
+		"CYCLE_TRACKING": "off",
+		// Morning summary in Telegram (opt-in, set up with `npm run telegram`): the local hour, 0-20, from which
+		// it's sent once last night's sleep has synced (it waits up to 3 hours for the sync).
+		"DAILY_SUMMARY_HOUR": "8"
 	},
 
 	// Set with: npx wrangler secret put <NAME>
+	// Optional: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID turn on the morning summary (`npm run telegram` sets both).
 	"secrets": {
 		"required": ["GARMIN_PERSONAL_API_KEY", "MCP_ADMIN_PASSWORD"]
+	},
+
+	// Every 15 minutes: checks whether the morning summary is due. Does nothing without the Telegram secrets.
+	"triggers": {
+		"crons": ["*/15 * * * *"]
 	},
 
 	"observability": {

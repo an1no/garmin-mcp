@@ -5,7 +5,8 @@
 
 A small, private server that lets the **Gemini web app** (`gemini.google.com`), **Claude** or any other MCP client read **your
 own Garmin Connect data**: activities, sleep, HRV, Body Battery, VO2 max, weight, Fitness Age, heart rate zones, logged food, Health Snapshots and daily health stats. It runs on Cloudflare's free
-plan, nothing sits in between, and only you can connect apps to it.
+plan, nothing sits in between, and only you can connect apps to it. Optionally it also sends you a
+[morning summary in Telegram](#morning-summary-in-telegram-optional).
 
 You ask Gemini things like *"@Garmin Connect how did I sleep this week?"*, and Gemini calls your server, which reads
 the data from Garmin's official Personal API.
@@ -218,6 +219,51 @@ All tools are read-only: nothing is ever changed in your Garmin account. Dates a
 has no date, "today" is computed in the timezone from your Garmin profile (or the zone you set as `TIMEZONE` in
 `wrangler.jsonc`).
 
+## Morning summary in Telegram (optional)
+
+Your server can also send you one short message every morning, without you asking: last night's sleep, HRV, Body
+Battery and resting heart rate next to your 7-day averages, plus yesterday's steps and activities. On Mondays it adds
+last week compared with the week before. For example (made-up numbers):
+
+```
+Good morning! Tuesday, 24 November
+
+😴 Sleep: 7 h 12 min, score 82 (good)
+      7-day average: 6 h 50 min, score 76
+💓 HRV: 48 ms, balanced · 7-day average 46 ms
+🔋 Body Battery: 78 on waking, +52 during sleep
+❤️ Resting heart rate: 54 bpm · 7-day average 56 bpm
+
+Yesterday
+👟 9,812 steps (goal 8,000)
+🏃 Morning Run: 8.2 km, 42:10
+```
+
+**How it works.** A cron trigger checks every 15 minutes. From 8:00 your time (the time zone in your Garmin profile,
+or `TIMEZONE`) it waits for last night's sleep to sync from the watch and sends the message as soon as it's there; if
+the sleep still hasn't synced by 11:00, it sends without it. One message a day. If Garmin can't be read at all (for
+example because the key expired), the message says so.
+
+**Turn it on (about 2 minutes):**
+
+1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, choose a name and a username (it must end
+   in `bot`), and copy the token it gives you.
+2. Open your new bot (BotFather sends a link) and press **Start**.
+3. In this folder, run `npm run telegram` and paste the token (the input is hidden). The script checks the token,
+   finds your chat, stores `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as Worker secrets and sends a test message.
+   Without a terminal to type into (an AI agent's shell), it creates `.secrets.env` for the token instead and exits
+   with code 2; with code 3 when you haven't pressed Start yet.
+
+To change the hour, set `DAILY_SUMMARY_HOUR` (0-20) in `wrangler.jsonc` and run `npm run deploy`. To turn it off:
+`npm run telegram -- --off`. Deployed with the button and no terminal? Add the two secrets under your Worker's
+**Settings → Variables and Secrets**; after pressing Start, open `https://api.telegram.org/bot<token>/getUpdates`
+in a browser, and the `"chat":{"id":...}` there is your chat ID.
+
+**Privacy.** The message goes from Cloudflare to Telegram and on to your chat, so Telegram's servers see these numbers
+(chats with bots aren't end-to-end encrypted). The bot only ever writes to your chat and doesn't answer anyone. The
+server stores nothing but a "sent today" marker. Without the Telegram secrets the cron trigger still runs, but does
+nothing. (Cloudflare's free plan allows 5 cron triggers per account; this uses one.)
+
 ---
 
 ## How it works
@@ -248,6 +294,7 @@ There are two "locks":
 | Admin password | Cloudflare (encrypted secret) + `admin-password.txt` on your computer | Move it to a password manager, then delete the file |
 | Garmin access token | Cloudflare KV, AES-GCM encrypted with a key derived from your API key | Renewed automatically every ~23 hours |
 | Gemini's OAuth tokens | Cloudflare KV, stored only as hashes | |
+| Telegram bot token (optional) | Cloudflare (encrypted secret) | Only if you turned on the [morning summary](#morning-summary-in-telegram-optional) |
 
 Cloudflare secrets are write-only: nobody, including you, can read them back. If you lose the admin password, set a
 new one (see [Maintenance](#maintenance)).
@@ -277,6 +324,7 @@ Found a security problem? Please report it privately, as described in [SECURITY.
 | Turn cycle tracking on or off | Set `CYCLE_TRACKING` in `wrangler.jsonc` to `"on"` or `"off"`, then `npm run deploy` (see [Cycle tracking](#cycle-tracking-opt-in)) |
 | Change the timezone | By default (`"TIMEZONE": "auto"`) it follows your Garmin profile, re-read once a day. To force one, set `TIMEZONE` in `wrangler.jsonc` (e.g. `Europe/Berlin`), then `npm run deploy` |
 | Watch live logs | `npx wrangler tail`, or the dashboard (see [Logs](#logs)) |
+| Turn the morning summary on or off | `npm run telegram`, or `npm run telegram -- --off` (see [Morning summary](#morning-summary-in-telegram-optional)) |
 | Save your changes to GitHub | `git add -A`, `git commit -m "Describe what changed"`, `git push` |
 
 ### Cycle tracking (opt-in)
@@ -296,15 +344,17 @@ of guessing phase names.
 
 ### Logs
 
-The server writes one structured log line per tool call and per decision on the approval page, so you can see
+The server writes one structured log line per tool call, per decision on the approval page and per morning
+summary step, so you can see
 what happened without guessing:
 
 | Event | Fields |
 | --- | --- |
 | `tool_call` | `tool`, `ok`, `durationMs`; on failure `errorKind` (`garmin`, `invalid_input`, `timeout`, `unexpected`) and `garminStatus` (e.g. 429); `partialErrors` when one part of a combined result failed (e.g. one `get_trends` metric) |
 | `authorize` | `outcome`: `approved` (with `scope`), `denied`, `wrong_password` or `locked_out` (with `retryAfterSeconds`) |
+| `daily_summary` | `outcome`: `sent`, `send_failed` (with `telegramStatus`) or `waiting_for_sleep`; `partialErrors` when part of the data couldn't be read, `garminUnavailable` when none could |
 
-Arguments, dates, activity IDs, returned data, the password, tokens and IP addresses are never logged.
+Arguments, dates, activity IDs, returned data, the password, tokens, the Telegram chat and IP addresses are never logged.
 
 To read them: [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → your Worker →
 **Observability**, then filter, for example `event = tool_call` and `ok = false`. Or watch live with
@@ -483,6 +533,7 @@ Invoke-RestMethod -Method Post -Uri "https://garmin-mcp.<your-subdomain>.workers
 ```
 scripts/setup.mjs        npm run setup: login, secrets, deploy, checks
 scripts/check-lockfile.mjs  Fails if package-lock.json lacks a platform's optional binaries
+scripts/telegram.mjs     npm run telegram: turns the morning summary on or off
 src/
   index.ts               OAuthProvider setup (DCR, CIMD, scopes, token lifetimes), Worker entry point
   auth-handler.ts        Landing page and the password-protected /authorize consent flow
@@ -500,6 +551,7 @@ src/
   snapshots.ts           get_health_snapshots: Health Snapshot sessions with avg/min/max per metric
   parts.ts               Runs several Garmin requests; one failing part is reported, not fatal
   intraday.ts            get_day_details: heart rate, overnight HRV and SpO2 per interval, in local time
+  summary.ts             Morning summary in Telegram: the cron job, its data and the message
   profile.ts             Timezone for "today": TIMEZONE, or the Garmin profile's (cached in KV)
   garmin.ts              Garmin Personal API client with encrypted token caching
   format.ts              Date helpers and response shaping

@@ -31,7 +31,7 @@ import { fetchHealthSnapshots, SNAPSHOT_DEFAULT_DAYS } from "./snapshots";
 import { collectTrends, DEFAULT_TREND_METRICS, TREND_MAX_DAYS, TREND_METRICS } from "./trends";
 import { fetchActivityWorkouts } from "./workouts";
 
-export const SERVER_INFO = { name: "garmin-connect", version: "1.8.0" } as const;
+export const SERVER_INFO = { name: "garmin-connect", version: "1.9.0" } as const;
 
 export const SERVER_INSTRUCTIONS =
 	"Read-only access to the owner's Garmin Connect data (activities, daily health stats, sleep, HRV, Body Battery, " +

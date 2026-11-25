@@ -105,6 +105,14 @@ the tools over MCP. Print only field names and counts, never health values. Afte
 entries (`client:<id>`, `grant:owner:*` from that test, `token:owner:*` from that test) so only Gemini's grant
 remains.
 
+### Optional: morning summary in Telegram
+
+Only if the user asks for it. The user creates a bot with @BotFather (`/newbot`) and presses **Start** in it. Then run
+`npm run telegram`. Without a TTY it exits with code `2` and adds an empty `TELEGRAM_BOT_TOKEN=` line to
+`.secrets.env`: ask the user to paste the bot token there (never in the chat), then run it again. Code `3` means the
+user hasn't pressed Start in the bot yet. Code `0`: the secrets are stored and a test message was sent; the summary
+arrives each morning from `DAILY_SUMMARY_HOUR` (default 8). `npm run telegram -- --off` turns it off.
+
 ## If the user wants changes
 
 - Code map: `src/index.ts` (OAuth provider and routes), `src/auth-handler.ts` (approval page), `src/security.ts`
@@ -116,7 +124,8 @@ remains.
   `src/parts.ts` (parallel requests with per-part errors, chunking), `src/profile.ts`
   (timezone: `TIMEZONE` or the Garmin profile's),
   `src/garmin.ts` (Garmin API client, token cache),
-  `src/format.ts` (response shaping), `scripts/setup.mjs` (setup).
+  `src/format.ts` (response shaping), `src/summary.ts` (morning summary in Telegram, run by the cron trigger in
+  `index.ts`), `scripts/setup.mjs` (setup), `scripts/telegram.mjs` (turns the morning summary on or off).
 - Garmin API reference with exact parameter names: https://developer.garmin.com/gc-developer-program/personal/swagger-docs/
 - Garmin's token endpoint needs `Accept: application/json, text/plain, */*`; `application/json` alone gets 406.
 - After editing `wrangler.jsonc`, run `npm run cf-typegen`.
@@ -128,6 +137,7 @@ remains.
 - After adding or upgrading dependencies, if the lockfile check fails, regenerate the lockfile from scratch
   (`rm -rf node_modules package-lock.json && npm install`) rather than editing it.
 - Test fixtures are synthetic. Never paste real Garmin responses (they contain health data) into tests.
-- Logging: only `logToolCall` (src/tools.ts) and `logAuthorize` (src/auth-handler.ts) write logs. Never log tool
-  arguments, dates, IDs, returned data, passwords, tokens or IP addresses; the tests check this.
+- Logging: only `logToolCall` (src/tools.ts), `logAuthorize` (src/auth-handler.ts) and `logDailySummary`
+  (src/summary.ts) write logs. Never log tool arguments, dates, IDs, returned data, passwords, tokens, the Telegram
+  chat ID or IP addresses; the tests check this.
 - Commit with git as usual; never add the secret files.

@@ -1,6 +1,6 @@
 {
   "name": "garmin-mcp",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "private": true,
   "description": "Remote MCP server (Cloudflare Workers + OAuth 2.0/DCR) exposing Garmin Connect Personal API data to Gemini and other MCP clients.",
   "license": "MIT",
@@ -30,6 +30,7 @@
     "check": "node scripts/check-lockfile.mjs && tsc --noEmit && vitest run && wrangler deploy --dry-run --outdir dist",
     "cf-typegen": "wrangler types --strict-vars=false",
     "setup": "node scripts/setup.mjs",
+    "telegram": "node scripts/telegram.mjs",
     "test:unit": "vitest run --project unit",
     "test:e2e": "vitest run --project e2e"
   },

@@ -49,6 +49,9 @@ export default defineConfig({
 								TIMEZONE: "UTC",
 								// Fixed here so the tests don't depend on the deployment's own setting in wrangler.jsonc.
 								CYCLE_TRACKING: "off",
+								DAILY_SUMMARY_HOUR: "8",
+								TELEGRAM_BOT_TOKEN: "123456789:e2e-test-telegram-token-not-real-xx",
+								TELEGRAM_CHAT_ID: "424242",
 							},
 						},
 					}),

@@ -73,4 +73,7 @@ rules in front of you.
   `tool_call` line per tool call (never any health data).
 - **Menstrual cycle data:** off by default. Only if the user asks: set `CYCLE_TRACKING` to `"on"` in
   `wrangler.jsonc`, then `npm run deploy`.
+- **Morning summary in Telegram:** only if the user asks. They create a bot with @BotFather and press Start in it;
+  then `npm run telegram` (exit code `2`: the bot token goes into `.secrets.env`, never into the chat; `3`: press Start
+  first). Off again with `npm run telegram -- --off`.
 - **Without a terminal:** the README's "Deploy to Cloudflare" button deploys a copy from the browser.
