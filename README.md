@@ -194,6 +194,33 @@ Other scripts:
 | `npm run cf-typegen` | Regenerate `worker-configuration.d.ts` after editing `wrangler.jsonc` |
 | `npx wrangler tail` | Stream live logs from the deployed Worker |
 
+## Making changes
+
+Edit the files, check them, deploy, and save the change to GitHub:
+
+```powershell
+npm run check
+```
+
+```powershell
+npx wrangler deploy
+```
+
+```powershell
+git add -A
+```
+
+```powershell
+git commit -m "Describe what changed"
+```
+
+```powershell
+git push
+```
+
+`npm run check` type-checks and test-bundles without deploying. `.gitignore` keeps `node_modules`, `.dev.vars`,
+`.secrets.env` and `admin-password.txt` out of git, so secrets are never committed.
+
 ## Security
 
 - **Only you can authorize clients.** Any app can register via DCR, but tokens are issued only after the
