@@ -1,0 +1,29 @@
+# Dependabot opens pull requests for dependency updates; CI (type check, unit tests, dry-run
+# bundle) runs on each one, so a broken update shows up red before anything is merged.
+# Nothing is merged or deployed automatically.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # agents pins exact @modelcontextprotocol/server and /client versions as peer dependencies,
+      # so these must move together.
+      mcp-and-agents:
+        patterns: ["agents", "@modelcontextprotocol/*"]
+      cloudflare:
+        patterns: ["wrangler", "@cloudflare/*"]
+      dev-tools:
+        dependency-type: development
+        patterns: ["*"]
+    ignore:
+      # MCP SDK 2.x is a different API (the server uses 1.x with McpAgent); upgrade by hand.
+      - dependency-name: "@modelcontextprotocol/sdk"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
