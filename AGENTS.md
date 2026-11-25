@@ -114,8 +114,12 @@ remains.
 - Garmin API reference with exact parameter names: https://developer.garmin.com/gc-developer-program/personal/swagger-docs/
 - Garmin's token endpoint needs `Accept: application/json, text/plain, */*`; `application/json` alone gets 406.
 - After editing `wrangler.jsonc`, run `npm run cf-typegen`.
-- Before deploying: `npm run check` (type check, the Vitest unit tests in `test/`, then a dry-run bundle). It must
-  pass; don't deploy or commit with failing tests. Add or update tests in `test/` for every behaviour you change
-  (`test/helpers.ts` has a fake KV and a fake Garmin client). Deploy with `npm run deploy`.
+- Before deploying: `npm run check` (lockfile check, type check, unit tests in `test/` and end-to-end tests in
+  `test/e2e/`, then a dry-run bundle). It must pass; don't deploy or commit with failing tests. Add or update tests
+  for every behaviour you change (`test/helpers.ts` has a fake KV and a fake Garmin client; e2e tests mock Garmin
+  with MSW via `test/e2e/network.ts`). Deploy with `npm run deploy`.
+- The tests never touch the deployed server or Garmin. Don't point them at either.
+- After adding or upgrading dependencies, if the lockfile check fails, regenerate the lockfile from scratch
+  (`rm -rf node_modules package-lock.json && npm install`) rather than editing it.
 - Test fixtures are synthetic. Never paste real Garmin responses (they contain health data) into tests.
 - Commit with git as usual; never add the secret files.
