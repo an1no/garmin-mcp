@@ -3,6 +3,20 @@
   "version": "1.0.0",
   "private": true,
   "description": "Remote MCP server (Cloudflare Workers + OAuth 2.0/DCR) exposing Garmin Connect Personal API data to Gemini and other MCP clients.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/an1no/garmin-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "garmin",
+    "garmin-connect",
+    "cloudflare-workers",
+    "gemini",
+    "oauth"
+  ],
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
@@ -23,5 +37,18 @@
   "devDependencies": {
     "typescript": "^7.0.2",
     "wrangler": "^4.168.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "GARMIN_PERSONAL_API_KEY": {
+        "description": "Your Garmin Connect **Personal API key**. Create one on Garmin Connect's Personal API Key page ([instructions](https://developer.garmin.com/gc-developer-program/personal/personal-api)); it's shown only once."
+      },
+      "MCP_ADMIN_PASSWORD": {
+        "description": "The password you'll type to approve AI apps that connect to your server. Use a long random password (at least 12 characters) and keep it in a password manager."
+      },
+      "TIMEZONE": {
+        "description": "Your IANA timezone, e.g. `Europe/Berlin` or `America/New_York`, so \"today\" means today where you live."
+      }
+    }
   }
 }

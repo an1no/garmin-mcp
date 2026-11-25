@@ -1,6 +1,6 @@
 # Local development secrets for `npx wrangler dev`.
 # Copy this file to `.dev.vars` (which is git-ignored) and fill in real values.
-# Production secrets are set with `npx wrangler secret put <NAME>` instead.
+# Production secrets are stored on Cloudflare by `npm run setup` instead.
 
 GARMIN_PERSONAL_API_KEY="paste-your-garmin-personal-api-key-here"
 MCP_ADMIN_PASSWORD="a-long-random-password-at-least-12-chars"
