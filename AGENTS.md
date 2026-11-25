@@ -25,7 +25,7 @@ The human-facing guide is [README.md](README.md). This file tells you how to dri
 
 ### 1. Prerequisites
 
-- `node --version` must be 20 or newer. If Node is missing or older, ask the user to install the LTS version from
+- `node --version` must be 22.12 or newer (Wrangler 4 requires it). If Node is missing or older, ask the user to install the LTS version from
   https://nodejs.org and reopen the terminal.
 - Run `npm install` in the repository root.
 
@@ -113,5 +113,8 @@ remains.
 - Garmin API reference with exact parameter names: https://developer.garmin.com/gc-developer-program/personal/swagger-docs/
 - Garmin's token endpoint needs `Accept: application/json, text/plain, */*`; `application/json` alone gets 406.
 - After editing `wrangler.jsonc`, run `npm run cf-typegen`.
-- Before deploying: `npm run check` (type-check plus a dry-run bundle). Deploy with `npm run deploy`.
+- Before deploying: `npm run check` (type check, the Vitest unit tests in `test/`, then a dry-run bundle). It must
+  pass; don't deploy or commit with failing tests. Add or update tests in `test/` for every behaviour you change
+  (`test/helpers.ts` has a fake KV and a fake Garmin client). Deploy with `npm run deploy`.
+- Test fixtures are synthetic. Never paste real Garmin responses (they contain health data) into tests.
 - Commit with git as usual; never add the secret files.

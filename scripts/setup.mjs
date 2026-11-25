@@ -92,8 +92,11 @@ async function main() {
 
 	// 1. Prerequisites ---------------------------------------------------------------------
 	step(1, "Checking prerequisites");
-	const [major] = process.versions.node.split(".").map(Number);
-	if (major < 20) throw new SetupError(`Node.js 20 or newer is required (you have ${process.versions.node}).`);
+	const [major, minor] = process.versions.node.split(".").map(Number);
+	// Wrangler 4 needs Node.js 22.12 or newer.
+	if (major < 22 || (major === 22 && minor < 12)) {
+		throw new SetupError(`Node.js 22.12 or newer is required (you have ${process.versions.node}). Install the LTS version from https://nodejs.org.`);
+	}
 	ok(`Node.js ${process.versions.node}`);
 	if (!existsSync(WRANGLER)) {
 		info("Installing dependencies (npm install)...");
