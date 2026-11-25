@@ -21,7 +21,8 @@ the data from Garmin's official Personal API.
 - **Locked to you.** Apps can connect only after you approve them with your own password.
 
 > **Using an AI coding agent** (Claude Code, Codex, Cursor...)? Clone this repo, open it in the agent and say
-> **"Set this up for me."** The agent's instructions are in [AGENTS.md](AGENTS.md).
+> **"Set this up for me."** The agent's instructions are in [AGENTS.md](AGENTS.md). Or install the
+> [setup skill](#or-let-an-agent-skill-do-it) and just ask for your Garmin data in Gemini or Claude.
 
 ---
 
@@ -94,6 +95,28 @@ The button copies this repository into your GitHub (or GitLab) account and deplo
 
 Every push to your copy redeploys it automatically. Your copy doesn't follow this repository by itself: to get
 updates, pull them from `an1no/garmin-mcp` into your copy (or use `npm run setup` from a clone of this one).
+
+### Or: let an Agent Skill do it
+
+[`skills/garmin-mcp-setup`](skills/garmin-mcp-setup/SKILL.md) is an [Agent Skill](https://agentskills.io): instructions
+an AI coding agent loads when your request matches, here "I want my Garmin data in Gemini/Claude". It clones this
+repository and follows [AGENTS.md](AGENTS.md), with the same rules (you fill in secrets yourself, never in the
+chat).
+
+For Claude Code, install it as a personal skill:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME.claudeskillsgarmin-mcp-setup" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/an1no/garmin-mcp/main/skills/garmin-mcp-setup/SKILL.md" -OutFile "$HOME.claudeskillsgarmin-mcp-setupSKILL.md"
+```
+
+On macOS or Linux:
+
+```bash
+mkdir -p ~/.claude/skills/garmin-mcp-setup && curl -fsSL https://raw.githubusercontent.com/an1no/garmin-mcp/main/skills/garmin-mcp-setup/SKILL.md -o ~/.claude/skills/garmin-mcp-setup/SKILL.md
+```
+
+Then ask, for example, *"Set up my Garmin data in Gemini."* Other agents that support Agent Skills take the same
+folder in their own skills directory (see their docs).
 
 ### Connect it to Gemini
 
@@ -467,6 +490,7 @@ vitest.config.ts         Two test projects: unit (Node) and e2e (Workers runtime
 .github/workflows/ci.yml Type check, tests and dry-run bundle on every push and pull request
 .github/dependabot.yml   Weekly dependency update pull requests
 AGENTS.md                Instructions for AI coding agents
+skills/garmin-mcp-setup/ Agent Skill that sets the server up (clones the repo, follows AGENTS.md)
 SECURITY.md              How to report vulnerabilities
 LICENSE                  MIT
 ```
