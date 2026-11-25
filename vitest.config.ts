@@ -47,6 +47,8 @@ export default defineConfig({
 								GARMIN_PERSONAL_API_KEY: "e2e-test-garmin-key",
 								MCP_ADMIN_PASSWORD: "e2e-test-admin-password",
 								TIMEZONE: "UTC",
+								// Fixed here so the tests don't depend on the deployment's own setting in wrangler.jsonc.
+								CYCLE_TRACKING: "off",
 							},
 						},
 					}),
