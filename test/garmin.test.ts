@@ -167,13 +167,21 @@ describe("GarminClient", () => {
 });
 
 describe("token response formats", () => {
-	/** KV TTL chosen for a token response, in a fresh isolate (so nothing is cached yet). */
+	/**
+	 * KV TTL chosen for a token response, in a fresh isolate (so nothing is cached yet).
+	 * The clock is frozen so the result doesn't depend on how many milliseconds the call takes.
+	 */
 	const ttlFor = async (token: Route) => {
 		vi.resetModules();
 		const fresh: GarminModule = await import("../src/garmin");
 		stubFetch({ token });
 		const kv = new FakeKV();
-		await new fresh.GarminClient("k", kv.asKV()).get("/x");
+		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+		try {
+			await new fresh.GarminClient("k", kv.asKV()).get("/x");
+		} finally {
+			vi.useRealTimers();
+		}
 		return kv.puts[0]?.options?.expirationTtl;
 	};
 
